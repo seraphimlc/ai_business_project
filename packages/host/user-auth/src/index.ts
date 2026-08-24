@@ -61,6 +61,9 @@ const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/status',
+  // Root dist files the login page references (favicon, web manifest).
+  '/favicon.svg',
+  '/manifest.webmanifest',
 ])
 /** Public static prefixes: plugin assets and bundled frontend assets. */
 const PUBLIC_PATH_PREFIXES: readonly string[] = ['/plugins/', '/assets/']

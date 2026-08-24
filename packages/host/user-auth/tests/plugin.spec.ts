@@ -216,6 +216,19 @@ describe('user-auth gate composition', () => {
     expect((await request(port, '/login')).status).toBe(200)
   })
 
+  it('serves the root favicon and manifest unauthenticated', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition({ trustedHosts: ['dsh.visitworld.me'] }, seedUser)
+    const server = loaded.webServer
+    const port = server.port
+    server.register({ kind: 'exact', path: '/favicon.svg', handler: (_req, res) => { res.writeHead(200, { 'content-type': 'image/svg+xml' }); res.end('<svg/>') } })
+    server.register({ kind: 'exact', path: '/manifest.webmanifest', handler: (_req, res) => { res.writeHead(200, { 'content-type': 'application/manifest+json' }); res.end('{}') } })
+
+    // The login page references these root dist files; the gate must not 401
+    // the unauthenticated browser fetching them.
+    expect((await request(port, '/favicon.svg')).status).toBe(200)
+    expect((await request(port, '/manifest.webmanifest')).status).toBe(200)
+  })
+
   it('lets a valid session cookie through and keeps public plugin and asset prefixes open', { timeout: 60_000 }, async () => {
     const loaded = await loadComposition({ trustedHosts: ['dsh.visitworld.me'] }, seedUser)
     const server = loaded.webServer
