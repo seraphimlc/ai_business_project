@@ -79,6 +79,24 @@ class FakeWebSocket extends EventTarget {
   }
 }
 
+/**
+ * Collect process-level unhandled rejections while `run` executes. Node
+ * reports a rejection at the end of the microtask checkpoint that abandons
+ * it, so the extra macrotask turn flushes any leak past the assertion point.
+ */
+async function captureUnhandledRejections(run: () => Promise<void>): Promise<unknown[]> {
+  const unhandled: unknown[] = []
+  const listener = (reason: unknown): void => { unhandled.push(reason) }
+  process.on('unhandledRejection', listener)
+  try {
+    await run()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    return unhandled
+  } finally {
+    process.off('unhandledRejection', listener)
+  }
+}
+
 type FetchHandler = (init?: RequestInit) => Response | Promise<Response>
 
 /** Mock fetch routing by URL; records calls for later assertions. */
@@ -461,6 +479,36 @@ describe('logout row + session-expiry guards', () => {
     // Let any queued redirect microtask run before asserting nothing moved.
     await Promise.resolve()
     expect(location.href).toBe('http://localhost/login')
+  })
+
+  it('leaks no unhandled rejection and does not redirect when a fetch cannot reach the server', async () => {
+    stubFetch({ '/api/workspace/describe': () => Promise.reject(new TypeError('Failed to fetch')) })
+    const location = stubLocation({ pathname: '/workspace', href: 'http://localhost/workspace' })
+    const { ctx } = await bench()
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    const unhandled = await captureUnhandledRejections(async () => {
+      // The caller observes the failure through the returned promise…
+      await expect(fetch('/api/workspace/describe')).rejects.toThrow('Failed to fetch')
+    })
+    // …and the guard's own derived promise must not leak a rejection.
+    expect(unhandled).toEqual([])
+    // A network failure is not an expiry signal: no redirect.
+    expect(location.href).toBe('http://localhost/workspace')
+  })
+
+  it('reloads (and leaks no unhandled rejection) when the logout request cannot reach the server', async () => {
+    stubFetch({ '/api/auth/logout': () => Promise.reject(new TypeError('Failed to fetch')) })
+    const location = stubLocation({ pathname: '/', href: 'http://localhost/' })
+    const reload = vi.fn()
+    location.reload = reload
+    render(createElement(LogoutButton, { t: makeTranslate(zh) }))
+    fireEvent.click(screen.getByRole('button', { name: '登出' }))
+    const unhandled = await captureUnhandledRejections(async () => {
+      // The reload is unconditional: even a failed logout re-derives the
+      // session state from the gate on the fresh page load.
+      await waitFor(() => { expect(reload).toHaveBeenCalledTimes(1) })
+    })
+    expect(unhandled).toEqual([])
   })
 
   it('redirects and prompts when an events socket dies before ever opening', async () => {

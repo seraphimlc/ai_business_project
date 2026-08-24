@@ -25,6 +25,9 @@ export function LogoutButton({ t }: LogoutButtonProps) {
     void (async () => {
       try {
         await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+      } catch {
+        // Swallow: a failed logout still reloads below — the fresh page load
+        // re-derives the session state from the gate. Nothing to surface.
       } finally {
         window.location.reload()
       }

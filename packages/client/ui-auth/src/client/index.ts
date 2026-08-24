@@ -130,6 +130,9 @@ function wrapFetch(original: typeof globalThis.fetch): typeof globalThis.fetch {
       if ((result.status === 401 || result.status === 403) && !PUBLIC_AUTH_PATHS.has(pathOf(input))) {
         redirectToLogin()
       }
+    }).catch(() => {
+      // The caller observes the network failure through the returned
+      // promise; this derived promise must not leak an unhandled rejection.
     })
     return response
   }
