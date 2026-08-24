@@ -81,7 +81,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
   - `HttpOnly`、`SameSite=Strict`、`Path=/`
   - `Secure`（公网 HTTPS；本地开发通过配置关闭）
   - `Max-Age`：默认 24h（可配置 `--session-ttl-hours`）
-- 会话存储：`$DSH_HOME/auth-sessions.json`（带 TTL，启动时清理过期项；临时文件 + 原子 rename + chmod 600）。重启不丢失（文件持久化）。
+- 会话存储：`$DSH_HOME/auth-sessions.json`（带 TTL，**签发/校验时惰性清理**过期项；临时文件 + 原子 rename + chmod 600）。重启不丢失（文件持久化）。
 - 登出接口：`POST /api/auth/logout`，删除服务端记录并清 cookie。
 - 登录校验失败：统一返回 401 + `{ "error": "invalid credentials" }`，不区分"用户不存在"与"密码错误"。
 - **会话过期后的客户端行为**：SPA 已加载后若会话过期，API 返回 401 / WS 被拒时，浏览器侧统一跳转 `/login?next=<当前路径>`；WS 断开时提示"登录已过期，请重新登录"。

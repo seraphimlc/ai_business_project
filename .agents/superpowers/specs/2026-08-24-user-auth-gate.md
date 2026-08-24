@@ -362,7 +362,7 @@ pnpm exec vitest run packages/host/user-auth/tests/hash.spec.ts
 
 **启动顺序（关键，评审强制）:** Cordis Loader 对所有配置行**并发**激活（`Promise.allSettled(config.map(create))`），`[Service.init]`（含 webserver `listen`）在激活时执行，因此**不能依赖 cordis.patch.yml 行序**保证 `setAuthenticate` 先于 `listen`。方案：
 
-1. `user-auth` 的 apply 在 `ctx.on('ready')` 或通过 `ctx.inject(['webServer'], ...)` **同步**调用 `setAuthenticate`（在 webserver 服务存在即注入，即使 listen 尚未完成也先于首个请求）。
+1. `user-auth` 的 apply 通过 `ctx.inject(['webServer'], ...)` **同步**调用 `setAuthenticate`（在 webserver 服务存在即注入，即使 listen 尚未完成也先于首个请求）。
 2. 更稳妥：`user-auth` 通过 `ctx.inject(['webServer'])` 注入，在注入回调内**立即**设置钩子——Cordis 保证依赖服务先于消费者初始化完成，且 `listen` 只在 `[Service.init]` 完成后才 accept 连接，注入回调必然先于任何 socket 请求。
 3. 用真实组合测试验证：启动后**第一个**请求即被钩子处理（见 Step 1 测试）。
 
@@ -550,7 +550,8 @@ pnpm exec vitest run packages/host/user-auth/tests/hash.spec.ts
 - [ ] **Step 1: 写失败测试**
   - 登出入口点击 → `POST /api/auth/logout` → `window.location.reload()`。
   - 会话过期（API）：mock fetch 返回 401（非 auth 路径）→ 跳转 `/login?next=<当前路径>`。
-  - 会话过期（WS）：mock WS error/close → 跳转 `/login?next=<当前路径>` 并显示"登录已过期，请重新登录"提示。
+  - 会话过期（WS）：mock WS error/close（未收到 open）→ 跳转 `/login?next=<当前路径>` 并显示"登录已过期，请重新登录"提示。
+  - **负向**：open 之后发生的 close（网络中断/重启）→ **不**跳转（避免登录后误跳）。
 
 - [ ] **Step 2: 运行确认失败**
 
