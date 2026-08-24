@@ -24,7 +24,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 
 ## 架构总览
 
-新增一个宿主插件包 `packages/user-auth/`（认证门禁）和一个客户端插件包 `packages/client/ui-auth/`（登录页 UI）。对 `packages/host/webserver` 做**最小侵入改动**：仅新增一个可选单席位 `authenticate` 钩子字段与两个调用点（HTTP 分派前、WS upgrade 分派前），不改变任何路由语义、不回退、不涉及 session / agent 核心。
+新增一个宿主插件包 `packages/host/user-auth/`（认证门禁，深度 2 以满足 pnpm-workspace `packages/*/*` glob）和一个客户端插件包 `packages/client/ui-auth/`（登录页 UI）。对 `packages/host/webserver` 做**最小侵入改动**：仅新增一个可选单席位 `authenticate` 钩子字段与两个调用点（HTTP 分派前、WS upgrade 分派前），不改变任何路由语义、不回退、不涉及 session / agent 核心。
 
 ```
 浏览器 ──HTTPS──> nginx（TLS + 反代，去掉 auth_basic）──> dsh web :3080
@@ -80,7 +80,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
   - 名：`__Host-dsh_session`（Secure + Path=/ + 无 Domain 均满足，公网零成本硬化）
   - `HttpOnly`、`SameSite=Strict`、`Path=/`
   - `Secure`（公网 HTTPS；本地开发通过配置关闭）
-  - `Max-Age`：默认 24h（可配置 `--session-ttl`）
+  - `Max-Age`：默认 24h（可配置 `--session-ttl-hours`）
 - 会话存储：`$DSH_HOME/auth-sessions.json`（带 TTL，启动时清理过期项；临时文件 + 原子 rename + chmod 600）。重启不丢失（文件持久化）。
 - 登出接口：`POST /api/auth/logout`，删除服务端记录并清 cookie。
 - 登录校验失败：统一返回 401 + `{ "error": "invalid credentials" }`，不区分"用户不存在"与"密码错误"。
@@ -111,7 +111,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 
 | 请求 | 未认证行为 |
 |---|---|
-| `GET/POST /api/auth/login`、`POST /api/auth/logout` | 放行 |
+| `GET/POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/status` | 放行 |
 | `/plugins/*`（client 插件 bundle）、`/assets/*`、其他静态资源 | 放行（bundle 加载必需；优先于页面重定向行，避免带 `Accept: text/html` 的 bundle 请求被误重定向） |
 | `/login`（页面） | 放行 |
 | 任意路径、`Accept: text/html` 且非 `/login` | 302 → `/login?next=<原路径>` |
@@ -149,7 +149,7 @@ UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 
 
 ## 第五节：测试
 
-### 单元测试（`packages/user-auth/tests/`）
+### 单元测试（`packages/host/user-auth/tests/`）
 
 - 密码哈希：scrypt 生成/校验、错误密码拒绝、格式解析、`timingSafeEqual` 路径。
 - users.json：读取/解析/损坏处理/权限校验/symlink 拒绝/原子写/**运行中修改立即生效（再读）**。

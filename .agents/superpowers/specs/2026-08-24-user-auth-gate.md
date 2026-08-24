@@ -424,6 +424,7 @@ pnpm exec vitest run packages/host/user-auth/tests/hash.spec.ts
     // 2) openUsersStore + SessionStore(ttl) + RateLimiter({limit:5, windowMs:60000})
     // 3) fail-closed: config.trustedHosts.length > 0 且 users.load().length === 0 → throw
     //    （无 trustedHosts → fail-open + logger.warn）
+    // 4) 模块扩展：在 src/index.ts（或 src/req-user.d.ts）用 declare module 'node:http' 扩展 IncomingMessage.user
     // 4) ctx.inject(['webServer'], ({ webServer }) => {
     //      webServer.setAuthenticate(async (req) => { ...决策表... })
     //      // 公开: /api/auth/login /api/auth/logout /login /plugins/* /assets/*
@@ -492,12 +493,13 @@ pnpm exec vitest run packages/host/user-auth/tests/hash.spec.ts
 - Modify: `tsconfig.client.json` — `references` 追加 `{ "path": "./packages/client/ui-auth" }`。
 - Modify: `packages/bundle/web-app/package.json` — `dependencies` 追加 `"@deepseek-ai/dsh-client-ui-auth": "workspace:^"`。
 - Create: `packages/client/ui-auth/README.md`、`README.i18n.yaml`、`README.zh.md`（doc-sync 门禁）。
-- Modify: `knip.json` — ui-auth 的 `.tsx` 文件超出 catch-all 项目 glob（仅 `.ts`），补一个 `packages/client/ui-auth/**` 条目。
+- Modify: `knip.json` — ui-auth 的 `.tsx` 文件超出 catch-all 项目 glob（仅 `.ts`），按仓库 per-package 显式 glob 模式补条目：`["src/**/*.ts", "src/**/*.tsx", "tests/**/*.tsx"]`。
 
 **关键架构事实（评审确认）：仓库 SPA 没有 URL router / route table / history 导航。** AppFrame 直接挂载进 `root` slot，页面是单页无路由。因此 `/login` 的渲染机制必须显式设计：
 
 - `ui-auth` 浏览器半在启动时读 `window.location.pathname`（并监听 `popstate`）：
-  - 路径为 `/login` → 全屏渲染 `LoginPage`（挂载进 `root` / `shell.overlay` slot，覆盖正常 UI）。
+  - 路径为 `/login` → 全屏渲染 `LoginPage`，注册进 **`shell.overlay`** slot（list slot，additive，由 AppFrame 的 overlay 层渲染——`packages/client/ui-layout/src/client/AppFrame.tsx:194`）。
+  - **绝不能注册进 `root` slot**：`root` 是 single slot、已被 AppFrame 占用（`packages/client/runtime/src/client/slots.ts:41` 注明 "register into `shell.overlay` instead"）；占用它会遮蔽 AppFrame 及其声明的全部 seat（sidebar/conversation/details/shell.overlay），包括 Task 4.2 自己的 `settings.general.item` 登出入口。
   - 否则 → 正常 UI 不受影响（认证门禁在宿主侧，未登录时 SPA 根本不会加载到这一步——未认证的页面请求已被 302 到 `/login`）。
 - 登录成功 → `window.location.href = next || '/'`（整页跳转，重新走宿主认证）。
 - `/login` 只作为"登录表单的载体"，不是路由系统的一部分。
@@ -527,7 +529,7 @@ pnpm exec vitest run packages/host/user-auth/tests/hash.spec.ts
 
 - [ ] **Step 3: 实现浏览器半**
   - `LoginPage.tsx`：受控表单，`POST /api/auth/login`（fetch，`credentials: 'include'`），成功 → `location.href = next || '/'`，失败 → 显示 `invalid credentials` 本地化文案。
-  - `client/index.ts`：浏览器插件 apply 中——若 `location.pathname === '/login'` 或 `location.pathname.startsWith('/login')`，渲染 `LoginPage` 到 `root` slot（覆盖 AppFrame）；监听 `popstate` 处理前进/后退到 `/login`。
+  - `client/index.ts`：浏览器插件 apply 中——若 `location.pathname === '/login'` 或 `location.pathname.startsWith('/login')`，把 `LoginPage` 注册进 `shell.overlay` slot（additive，AppFrame overlay 层渲染，覆盖正常 UI 视觉）；监听 `popstate` 处理前进/后退到 `/login`。
   - `locales.ts`：`en`/`zh` 文案（username/password/submit/invalid credentials/no-account hint）。
   - `index.ts`（宿主半）空 apply，浏览器半导出 LoginPage 与挂载逻辑。
 
@@ -547,14 +549,16 @@ pnpm exec vitest run packages/host/user-auth/tests/hash.spec.ts
 
 - [ ] **Step 1: 写失败测试**
   - 登出入口点击 → `POST /api/auth/logout` → `window.location.reload()`。
-  - 会话过期：connection 的 API/WS 收到 401/403 → 跳转 `/login?next=<当前路径>`。
+  - 会话过期（API）：mock fetch 返回 401（非 auth 路径）→ 跳转 `/login?next=<当前路径>`。
+  - 会话过期（WS）：mock WS error/close → 跳转 `/login?next=<当前路径>` 并显示"登录已过期，请重新登录"提示。
 
 - [ ] **Step 2: 运行确认失败**
 
 - [ ] **Step 3: 实现**
   - `LogoutButton.tsx`：`POST /api/auth/logout`（credentials include）→ `location.reload()`。
-  - 注册进 `ui-settings` 的 General 设置区：通过 `packages/client/ui-settings/src/client/contract/slots.ts` 的 **`settings.general.item`** slot 注册一行"登出"（该 slot 是 General 页的加法席位，`ui-settings-general` 的 General section 渲染它）。
-  - **401 拦截**：在 `ui-auth` 浏览器半挂一个全局 fetch 响应拦截（对 `fetch` 包装或监听 connection 的 RPC 错误通道——实现时以仓库现有 connection 错误处理为准），收到 401/403 且非 `/api/auth/login` → `location.href = '/login?next=' + encodeURIComponent(location.pathname)`。
+  - 注册进 `ui-settings` 的 General 设置区：通过 `packages/client/ui-settings/src/client/contract/slots.ts:88` 的 **`settings.general.item`** slot 注册一行"登出"（该 slot 是 General 页的加法席位，`ui-settings-general` 的 General section 渲染它）。
+  - **API 401 拦截（机制固定为 fetch 包装）**：`WebApiClient.doFetch` 在调用时经 `globalThis.fetch`（`packages/client/connection/src/web-api-client.ts:18-20`），`ui-auth` 浏览器半包装 `globalThis.fetch`（或包装 connection 的 fetch 路径）：收到 401/403 且路径非 `/api/auth/login`、非 `/api/auth/logout` → `location.href = '/login?next=' + encodeURIComponent(location.pathname)`。
+  - **WS 过期信号与提示**：WS upgrade 被宿主拒绝（403）表现为浏览器侧 `WebSocket` error/close（stream 结束）。`ui-auth` 监听 connection 的 WS 关闭/错误事件：当会话过期导致 WS 断开时，跳转 `/login?next=<当前路径>` 并提示"登录已过期，请重新登录"（规格第四节要求）。
 
 - [ ] **Step 4: 运行确认通过**
 
