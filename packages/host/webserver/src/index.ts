@@ -198,10 +198,16 @@ export class WebServer extends Service {
         const decision = await hook(req)
         if (decision !== 'allow') {
           if (decision.status === 401) {
+            // Serialize before writeHead so a throwing serializer cannot leave
+            // a half-sent response on the wire.
+            const body = JSON.stringify(decision.json ?? { error: 'unauthorized' })
             res.writeHead(401, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify(decision.json ?? { error: 'unauthorized' }))
-          } else {
+            res.end(body)
+          } else if (decision.status === 302) {
             res.writeHead(302, { Location: decision.location })
+            res.end()
+          } else {
+            res.writeHead(400)
             res.end()
           }
           return
