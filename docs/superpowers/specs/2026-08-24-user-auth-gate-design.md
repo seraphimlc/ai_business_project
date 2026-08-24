@@ -74,7 +74,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 ### 登录会话
 
 - 登录接口：`POST /api/auth/login`，JSON body `{ "username": "...", "password": "..." }`。
-  - body 大小限制（如 10KB）；畸形 JSON → 400；`GET /api/auth/login` → 405。
+  - body 大小限制 10KB；畸形 JSON → 400；`GET /api/auth/login` → 405。
   - 密码比较用 `crypto.timingSafeEqual`（长度固定为 64 字节哈希，可安全比较）。
 - 校验成功 → 生成随机 32 字节 session token（`crypto.randomBytes`），服务端记录 `token → { username, displayName, expiresAt }`，签发 cookie：
   - 名：`__Host-dsh_session`（Secure + Path=/ + 无 Domain 均满足，公网零成本硬化）
@@ -100,7 +100,8 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 2. **单席位**：setter + disposer；重复设置抛错（与 `registerFallback` 一致）。
 3. **调用点**：`handle()` 在路由匹配**前**调用一次；upgrade 事件处理器在 upgrade 路由分派**前**调用一次。
 4. **安装时机**：必须在监听（`[Service.init]` 的 `listen`）之前安装——激活顺序保证首个请求即被拦截，配套一条启动顺序集成测试。
-5. **WS 拒绝**：复用 `packages/client/connection/src/websocket-downlink.ts:144` 的 `rejectWebSocketUpgrade(socket)`（写 HTTP 403 后 close）——与 connection 插件现有 untrusted 拒绝行为一致（`isTrustedApiRequest` 失败同样走 403）。
+5. **身份附加**：钩子返回 `'allow'` 前由 `user-auth` 插件自身负责把 `req.user = { username, displayName }` 附加到 `IncomingMessage`（WebServer 是通用组件、无法提供身份，此职责必须落在认证插件；TypeScript 通过模块扩展声明该字段）。
+6. **WS 拒绝映射**：`AuthDecision` 的 `status` 只作用于 HTTP 响应；对 upgrade 请求，任何 deny 决策统一走 `rejectWebSocketUpgrade(socket)`（写 403 后 close）。复用 `packages/client/connection/src/websocket-downlink.ts:144`——与 connection 插件现有 untrusted 拒绝行为一致。
 
 钩子由 `user-auth` 插件在 init 时注入。`user-auth` 同时注册 `exact` 路由 `/api/auth/login`、`/api/auth/logout`。
 
@@ -111,9 +112,9 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 | 请求 | 未认证行为 |
 |---|---|
 | `GET/POST /api/auth/login`、`POST /api/auth/logout` | 放行 |
-| 任意路径、`Accept: text/html` 且非 `/login` | 302 → `/login?next=<原路径>` |
+| `/plugins/*`（client 插件 bundle）、`/assets/*`、其他静态资源 | 放行（bundle 加载必需；优先于页面重定向行，避免带 `Accept: text/html` 的 bundle 请求被误重定向） |
 | `/login`（页面） | 放行 |
-| `/plugins/*`（client 插件 bundle）、`/assets/*`、其他静态资源 | 放行（bundle 加载必需） |
+| 任意路径、`Accept: text/html` 且非 `/login` | 302 → `/login?next=<原路径>` |
 | 其他 API（`/api/*` 非 auth） | 401 JSON |
 | WS upgrade（`/api/events.mux`、`/api/events.host`） | 拒绝（复用 `rejectWebSocketUpgrade`，写 403） |
 
@@ -125,8 +126,8 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 
 - 登录页路由 `/login`：用户名 + 密码 + 提交 + 错误提示（表单组件，复用 `ui-primitives` 样式体系）。
 - 未登录访问任意页面 → 302 `/login`；登录成功 → 跳回原路径（`?next=` 参数）。
-- 登出入口：在 `ui-settings` 或头部加入"登出"按钮（调用 `/api/auth/logout` 后刷新）。
-- 无账号时：公网绑定下 web 不启动（见第一节 fail-closed）；loopback 开发态登录页提示"未配置账号，运行 `dsh user add`"，不显示表单或表单禁用。
+- 登出入口：放入 `ui-settings` 的通用设置页（调用 `/api/auth/logout` 后刷新）。
+- 无账号时：已配置 `--trusted-host` 时 web 不启动（见第一节 fail-closed）；未配置时（本地开发）登录页提示"未配置账号，运行 `dsh user add`"，不显示表单或表单禁用。
 
 UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 注册 + `dsh.client` 声明），浏览器半 `src/client/`（登录页 + 登出入口 + 路由注册到现有路由表）。
 
@@ -141,7 +142,7 @@ UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 
 - 密码哈希：scrypt（见上），users.json / auth-sessions.json 权限 600，拒绝 symlink（Node `lstat` 校验）。
 - 登录限流：内存滑动窗口，每来源 IP 每 60s 最多 5 次失败；超限返回 429。**X-Forwarded-For 信任链**：仅当 socket 对端为 loopback（受信代理，nginx）时才信任 XFF，且取**最右项**（nginx 追加的 `$remote_addr`）；无 XFF 时回退到 `req.socket.remoteAddress`；直连 :3080 的对端按自身地址计数，XFF 一律不信任。滑动窗口需定期清理过期 IP 条目防内存增长。文档化：共享 NAT 下 5 次/60s 可能误伤同网段多人（可配置放宽）。
 - Cookie：`__Host-dsh_session`（公网）、HttpOnly / SameSite=Strict / Secure / 24h TTL（可配）。
-- **无有效账号（fail-closed）**：公网绑定 `0.0.0.0` 时拒绝启动 web profile；loopback 绑定允许 fail-open + 告警。见第一节。
+- **无有效账号（fail-closed）**：存在 `--trusted-host` 且 users.json 缺失/损坏/无账号 → 拒绝启动 web profile（`dsh web` 报错退出，提示运行 `dsh user add`）；仅当既无 `--trusted-host` 又无有效账号时（纯本地开发）fail-open + 告警。触发条件与第一节一致（`--host 0.0.0.0` 已被 startup 拒绝，不能作为判据）。
 - 登录失败：统一 401 消息，不泄露用户存在性；密码比较用 `timingSafeEqual`。
 - 会话文件损坏：视为无会话（要求重新登录），不崩溃。
 - 公开路径决策表（见第一节）：auth 端点、登录页、`/plugins/*` 静态资源公开；其余拦截。
