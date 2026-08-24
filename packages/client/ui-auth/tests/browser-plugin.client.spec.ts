@@ -18,6 +18,7 @@ import { makeTranslate, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import { apply, inject } from '../src/client/index.ts'
 import { apply as hostApply } from '../src/index.ts'
 import { LoginPage, type LoginPageProps } from '../src/client/LoginPage.tsx'
+import { LogoutButton } from '../src/client/LogoutButton.tsx'
 import { apply as applyInvariant } from '../src/invariant.ts'
 import { en, NS, zh } from '../src/client/locales.ts'
 
@@ -27,14 +28,55 @@ afterEach(() => {
 })
 
 /** Controllable location stand-in (jsdom throws on real navigation). */
-function stubLocation(over: { pathname?: string; search?: string; href?: string } = {}): {
+function stubLocation(over: {
+  pathname?: string
+  search?: string
+  href?: string
+  reload?: () => void
+} = {}): {
   pathname: string
   search: string
   href: string
+  reload: () => void
 } {
-  const location = { pathname: '/login', search: '', href: '', ...over }
+  const location = { pathname: '/login', search: '', href: '', reload: () => {}, ...over }
   vi.stubGlobal('location', location)
   return location
+}
+
+/**
+ * Controllable WebSocket double: the tests drive open/error/close sequencing
+ * through `connect`/`fail`/`drop` instead of real sockets (jsdom ships no
+ * WebSocket at all).
+ */
+class FakeWebSocket extends EventTarget {
+  static readonly CONNECTING = 0
+  static readonly OPEN = 1
+  static readonly CLOSING = 2
+  static readonly CLOSED = 3
+  readyState: number = FakeWebSocket.CONNECTING
+  url: string
+  constructor(url: string | URL, _protocols?: string | string[]) {
+    super()
+    this.url = String(url)
+  }
+  close(): void {}
+  send(): void {}
+  /** Test driver: the socket connected (fires `open`). */
+  connect(): void {
+    this.readyState = FakeWebSocket.OPEN
+    this.dispatchEvent(new Event('open'))
+  }
+  /** Test driver: the socket failed without ever opening. */
+  fail(): void {
+    this.dispatchEvent(new Event('error'))
+    this.dispatchEvent(new Event('close'))
+  }
+  /** Test driver: the socket dropped after opening (network blip, not expiry). */
+  drop(): void {
+    this.readyState = FakeWebSocket.CLOSED
+    this.dispatchEvent(new Event('close'))
+  }
 }
 
 type FetchHandler = (init?: RequestInit) => Response | Promise<Response>
@@ -65,28 +107,37 @@ interface Presentation {
 }
 
 /** Provide the locale face and capture the plugin's dictionary registrations. */
-function provideLocale(ctx: Context, capture: Presentation): void {
+function provideLocale(
+  ctx: Context,
+  capture: Presentation,
+  translate: (key: string) => string = key => key,
+): void {
   ctx.provide('locale', {
     register(namespace: string, dictionaries: unknown) {
       capture.dictionaries.push({ namespace, dictionaries })
       return () => {}
     },
-    bind: () => (key: string) => key,
+    bind: () => translate,
   })
 }
 
-/** Boot the plugin over the real SlotRegistry with `shell.overlay` declared. */
-async function bench() {
+/** Boot the plugin over the real SlotRegistry with both additive slots declared. */
+async function bench(translate: (key: string) => string = key => key) {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
   const slots = ctx.get('slots') as SlotRegistry
-  // Declare the frame's child slot exactly as ui-layout does at shell boot.
+  // Declare the frame's child slots exactly as their shells do at boot:
+  // `shell.overlay` as ui-layout declares it, `settings.general.item` as
+  // ui-settings-general's General entry declares it.
   slots.register({
     name: 'root',
-    children: { 'shell.overlay': { kind: 'list', scope: 'root' } },
+    children: {
+      'shell.overlay': { kind: 'list', scope: 'root' },
+      'settings.general.item': { kind: 'list', scope: 'root' },
+    },
   } as never, () => null)
   const presentation: Presentation = { slots, dictionaries: [] }
-  provideLocale(ctx, presentation)
+  provideLocale(ctx, presentation, translate)
   new TestRemote(ctx)
   return { ctx, slots, presentation }
 }
@@ -120,6 +171,8 @@ describe('browser plugin', () => {
           'error.invalidCredentials': '用户名或密码错误',
           'error.network': '无法连接服务器，请稍后重试',
           'hint.noAccount': '未配置账号，运行 `dsh user add`',
+          'logout': '登出',
+          'sessionExpired': '登录已过期，请重新登录',
         },
         en: {
           'form.username': 'Username',
@@ -128,6 +181,8 @@ describe('browser plugin', () => {
           'error.invalidCredentials': 'Invalid username or password',
           'error.network': 'Cannot reach the server, please try again later',
           'hint.noAccount': 'No account configured — run `dsh user add`',
+          'logout': 'Sign out',
+          'sessionExpired': 'Your session has expired, please sign in again',
         },
       },
     }])
@@ -345,5 +400,130 @@ describe('LoginPage', () => {
   it('exports the dictionary pair under the login namespace', () => {
     expect(NS).toBe('login')
     expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort())
+  })
+})
+
+describe('logout row + session-expiry guards', () => {
+  it('registers the logout row into settings.general.item', async () => {
+    stubLocation({ pathname: '/' })
+    const { ctx, slots } = await bench()
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    const entries = slots.entries('settings.general.item')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.options).toMatchObject({ id: 'logout', order: 100 })
+    expect(entries[0]?.component).toBe(LogoutButton)
+    expect(entries[0]?.locale).toBe('login')
+  })
+
+  it('posts to /api/auth/logout (credentials include) and reloads the page on click', async () => {
+    const { calls } = stubFetch({
+      '/api/auth/logout': () => new Response(null, { status: 204 }),
+    })
+    const location = stubLocation({ pathname: '/', href: 'http://localhost/' })
+    const reload = vi.fn()
+    location.reload = reload
+    render(createElement(LogoutButton, { t: makeTranslate(zh) }))
+    fireEvent.click(screen.getByRole('button', { name: '登出' }))
+    await waitFor(() => { expect(reload).toHaveBeenCalledTimes(1) })
+
+    const logout = calls.find(call => call.url === '/api/auth/logout')
+    expect(logout).toBeDefined()
+    expect(logout?.init?.method).toBe('POST')
+    expect(logout?.init?.credentials).toBe('include')
+  })
+
+  it('redirects to /login?next=<current path> when a non-auth API answers 401/403', async () => {
+    stubFetch({
+      '/api/workspace/describe': () => new Response('expired', { status: 401 }),
+      '/api/workspace/mutate': () => new Response('expired', { status: 403 }),
+    })
+    const location = stubLocation({ pathname: '/workspace', href: 'http://localhost/workspace' })
+    const { ctx } = await bench()
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    for (const url of ['/api/workspace/describe', '/api/workspace/mutate']) {
+      await fetch(url)
+    }
+    expect(location.href).toBe('/login?next=%2Fworkspace')
+  })
+
+  it('never redirects for 401/403 on the public auth endpoints (login, logout, status)', async () => {
+    stubFetch({
+      '/api/auth/login': () => new Response('no', { status: 401 }),
+      '/api/auth/logout': () => new Response('no', { status: 403 }),
+      '/api/auth/status': () => new Response('no', { status: 401 }),
+    })
+    const location = stubLocation({ pathname: '/login', href: 'http://localhost/login' })
+    const { ctx } = await bench()
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    for (const url of ['/api/auth/login', '/api/auth/logout', '/api/auth/status']) {
+      await fetch(url)
+    }
+    // Let any queued redirect microtask run before asserting nothing moved.
+    await Promise.resolve()
+    expect(location.href).toBe('http://localhost/login')
+  })
+
+  it('redirects and prompts when an events socket dies before ever opening', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const alert = vi.fn()
+    vi.stubGlobal('alert', alert)
+    const location = stubLocation({ pathname: '/workspace', href: 'http://localhost/workspace' })
+    const { ctx } = await bench(makeTranslate(zh))
+    await ctx.plugin({ inject: [...inject], apply }).await()
+
+    const socket = new WebSocket('/api/events.mux')
+    ;(socket as unknown as FakeWebSocket).fail()
+    expect(location.href).toBe('/login?next=%2Fworkspace')
+    expect(alert).toHaveBeenCalledWith('登录已过期，请重新登录')
+
+    // The signal is shared across sockets: a simultaneous mux+host failure
+    // (both created at boot against a dead session) prompts exactly once.
+    const socket2 = new WebSocket('/api/events.host')
+    ;(socket2 as unknown as FakeWebSocket).fail()
+    expect(alert).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not redirect or prompt when a socket drops after opening (network blip, not expiry)', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const alert = vi.fn()
+    vi.stubGlobal('alert', alert)
+    const location = stubLocation({ pathname: '/workspace', href: 'http://localhost/workspace' })
+    const { ctx } = await bench()
+    await ctx.plugin({ inject: [...inject], apply }).await()
+
+    const socket = new WebSocket('/api/events.mux')
+    ;(socket as unknown as FakeWebSocket).connect()
+    ;(socket as unknown as FakeWebSocket).drop()
+    expect(location.href).toBe('http://localhost/workspace')
+    expect(alert).not.toHaveBeenCalled()
+  })
+
+  it('leaves sockets that are not event streams alone', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const alert = vi.fn()
+    vi.stubGlobal('alert', alert)
+    const location = stubLocation({ pathname: '/workspace', href: 'http://localhost/workspace' })
+    const { ctx } = await bench()
+    await ctx.plugin({ inject: [...inject], apply }).await()
+
+    const socket = new WebSocket('/api/unrelated')
+    ;(socket as unknown as FakeWebSocket).fail()
+    expect(location.href).toBe('http://localhost/workspace')
+    expect(alert).not.toHaveBeenCalled()
+  })
+
+  it('restores the wrapped fetch and WebSocket globals on fiber teardown', async () => {
+    const originalFetch = vi.fn(async () => new Response('ok', { status: 200 }))
+    vi.stubGlobal('fetch', originalFetch)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    stubLocation({ pathname: '/', href: 'http://localhost/' })
+    const { ctx } = await bench()
+    const fiber = ctx.plugin({ inject: [...inject], apply })
+    await fiber.await()
+    expect(globalThis.fetch).not.toBe(originalFetch)
+    expect(globalThis.WebSocket).not.toBe(FakeWebSocket)
+    await fiber.dispose()
+    expect(globalThis.fetch).toBe(originalFetch)
+    expect(globalThis.WebSocket).toBe(FakeWebSocket)
   })
 })

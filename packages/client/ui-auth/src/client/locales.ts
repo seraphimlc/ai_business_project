@@ -11,6 +11,8 @@ export const zh = {
   'error.invalidCredentials': '用户名或密码错误',
   'error.network': '无法连接服务器，请稍后重试',
   'hint.noAccount': '未配置账号，运行 `dsh user add`',
+  'logout': '登出',
+  'sessionExpired': '登录已过期，请重新登录',
 } satisfies Record<string, string>
 
 /** The login namespace key union. */
@@ -24,4 +26,6 @@ export const en = {
   'error.invalidCredentials': 'Invalid username or password',
   'error.network': 'Cannot reach the server, please try again later',
   'hint.noAccount': 'No account configured — run `dsh user add`',
+  'logout': 'Sign out',
+  'sessionExpired': 'Your session has expired, please sign in again',
 } satisfies Record<LoginKey, string>
