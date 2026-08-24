@@ -225,7 +225,7 @@ describe('real Loader composition', () => {
         if (wsThrow) throw new Error('test authenticate failure')
         return wsDecision
       }
-      if (path === '/deny') return { status: 401, json: { error: 'unauthorized' } }
+      if (path === '/deny') return { status: 401, json: { error: 'custom' } }
       if (path === '/deny-plain') return { status: 401 }
       if (path === '/redirect') return { status: 302, location: '/login?next=%2Fprobe' }
       return 'allow'
@@ -237,9 +237,10 @@ describe('real Loader composition', () => {
     // The hook runs before route dispatch and 'allow' passes through untouched.
     expect(await request(port, '/probe')).toMatchObject({ status: 200, body: 'EXACT' })
 
-    // Deny answers before the route or fallback ever sees the request: an
-    // explicit JSON body, the default body for a bare 401, and a redirect.
-    expect(await request(port, '/deny')).toMatchObject({ status: 401, body: '{"error":"unauthorized"}' })
+    // Deny answers before the route or fallback ever sees the request: the
+    // hook's own JSON body (distinct from the default), the default body for a
+    // bare 401, and a redirect.
+    expect(await request(port, '/deny')).toMatchObject({ status: 401, body: '{"error":"custom"}' })
     expect(await request(port, '/deny-plain')).toMatchObject({ status: 401, body: '{"error":"unauthorized"}' })
     const redirect = await fetch(`http://127.0.0.1:${String(port)}/redirect`, { redirect: 'manual' })
     expect(redirect.status).toBe(302)
@@ -271,7 +272,11 @@ describe('real Loader composition', () => {
     expect(deniedBody).toContain('403 Forbidden')
     expect(deniedBody).toContain('forbidden')
 
-    // …and a throwing hook destroys the socket instead of crashing the server.
+    // …and a throwing hook destroys the socket before any HTTP response: the
+    // client sees a bare close with no 101 and no 403. Contrast with the deny
+    // above, which wrote a 403 through the same hook — a hook-less server
+    // would have let the route answer 101, so this empty close holds only
+    // while a live gate throws before dispatch.
     wsThrow = true
     const failed = connect(port, '127.0.0.1')
     failed.on('error', () => { /* The server-side close is the fixture outcome. */ })
@@ -288,7 +293,7 @@ describe('real Loader composition', () => {
       '',
     ].join('\r\n'))
     await failedClosed
-    expect(Buffer.concat(failedChunks).toString()).not.toContain('403')
+    expect(Buffer.concat(failedChunks).toString()).toBe('')
     expect(await request(port, '/probe')).toMatchObject({ status: 200, body: 'EXACT' })
 
     // The disposer releases the seat, restoring registrability.
