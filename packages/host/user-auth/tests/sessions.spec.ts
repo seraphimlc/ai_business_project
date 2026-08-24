@@ -6,7 +6,7 @@
  * throws). Files land atomically with mode 0600 and parent dirs 0700.
  */
 
-import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -91,6 +91,39 @@ describe('session store', () => {
     expect(file.sessions.map(s => s.token)).toEqual([validToken])
   })
 
+  it('does not rewrite the file when validating a live token with no expired entries', async () => {
+    const path = join(scratch(), 'auth-sessions.json')
+    const store = openSessionStore(path)
+    const token = await store.create('alice', 'Alice', 60_000)
+    // writeFileAtomic commits by rename, so a write always changes the inode;
+    // an unchanged inode proves the validate fast path never rewrote the file.
+    const ino = statSync(path).ino
+    await store.validate(token)
+    expect(statSync(path).ino).toBe(ino)
+  })
+
+  it('serializes concurrent creates so no issued session is lost', async () => {
+    const path = join(scratch(), 'auth-sessions.json')
+    const store = openSessionStore(path)
+    // Five simultaneous creates: two already lose one session without the
+    // writer lock (reviewer probe: 200/200), and five stay far inside the
+    // lock's default wait under its exponential backoff.
+    const tokens = await Promise.all(
+      Array.from({ length: 5 }, (_, index) => store.create(`user${index}`, `User ${index}`, 60_000)),
+    )
+    expect(readSessionsFile(path).sessions).toHaveLength(tokens.length)
+    for (const [index, token] of tokens.entries()) {
+      await expect(store.validate(token)).resolves.toEqual({ username: `user${index}`, displayName: `User ${index}` })
+    }
+  })
+
+  it('rejects a non-positive or non-finite ttlMs on create', async () => {
+    const store = openSessionStore(join(scratch(), 'auth-sessions.json'))
+    await expect(store.create('alice', 'Alice', 0)).rejects.toThrow(/ttlMs/)
+    await expect(store.create('alice', 'Alice', -1_000)).rejects.toThrow(/ttlMs/)
+    await expect(store.create('alice', 'Alice', Number.NaN)).rejects.toThrow(/ttlMs/)
+  })
+
   it('lazily removes expired sessions when creating a new session', async () => {
     const path = join(scratch(), 'auth-sessions.json')
     writeFileSync(path, JSON.stringify({
@@ -119,6 +152,16 @@ describe('session store', () => {
     await expect(openSessionStore(path).validate('a'.repeat(64))).resolves.toBeNull()
   })
 
+  it('refuses to read through a symbolic link at the document path', async () => {
+    const dir = scratch()
+    const real = join(dir, 'real.json')
+    const token = await openSessionStore(real).create('alice', 'Alice', 60_000)
+    const link = join(dir, 'auth-sessions.json')
+    symlinkSync(real, link)
+    // The link must not be followed even when its target holds a valid session.
+    await expect(openSessionStore(link).validate(token)).resolves.toBeNull()
+  })
+
   it('rebuilds a corrupted file on create', async () => {
     const path = join(scratch(), 'auth-sessions.json')
     writeFileSync(path, '{ not json')
@@ -143,6 +186,21 @@ describe('session store', () => {
     await store.remove(token)
     await expect(store.validate(token)).resolves.toBeNull()
     expect(readSessionsFile(path).sessions).toHaveLength(0)
+  })
+
+  it('remove on a missing file is a no-op that does not create the document', async () => {
+    const path = join(scratch(), 'auth-sessions.json')
+    const store = openSessionStore(path)
+    await expect(store.remove('a'.repeat(64))).resolves.toBeUndefined()
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('remove on a corrupted file is a no-op that leaves the file untouched', async () => {
+    const path = join(scratch(), 'auth-sessions.json')
+    writeFileSync(path, '{ not json')
+    const store = openSessionStore(path)
+    await expect(store.remove('a'.repeat(64))).resolves.toBeUndefined()
+    expect(readFileSync(path, 'utf8')).toBe('{ not json')
   })
 
   it('issues distinct tokens for distinct sessions', async () => {

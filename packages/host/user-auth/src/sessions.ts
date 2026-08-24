@@ -3,15 +3,22 @@
  * backed by `auth-sessions.json` (a `{ version: 1, sessions: [...] }`
  * document) with TTL expiry and fail-closed reads. Every operation re-reads
  * the file so a long-running CLI observes external edits; create and validate
- * lazily drop expired entries and commit through `writeFileAtomic` (temp
- * sibling + atomic rename, mode 0600, parent dirs 0700). A missing or
- * corrupted file reads as an empty session set — validation returns null
- * instead of throwing, and create simply rebuilds the file.
+ * lazily drop expired entries. Mutations are read-modify-write cycles, so each
+ * one runs under the cross-process writer lock (`withFileLock`, same-package
+ * sibling stores do the same): the lock's exclusive create needs the parent
+ * directory first, and the re-read happens inside the lock so a cycle can
+ * never resurrect a state another writer just replaced. Writes commit through
+ * `writeFileAtomic` (temp sibling + atomic rename, mode 0600, parent dirs
+ * 0700), so pure reads stay lock-free. A missing, corrupted, or symlinked
+ * document reads as an empty session set — validation returns null instead of
+ * throwing, and create simply rebuilds the file.
  */
 
 import { randomBytes } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { lstatSync, readFileSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 
 /** One issued session in the store. */
 export interface SessionRecord {
@@ -58,51 +65,93 @@ export function openSessionStore(sessionsPath: string): SessionStore {
   }
 }
 
-/** Create a session: lazy-clean expired entries, append, and persist. */
+/**
+ * Create a session: under the writer lock, lazy-clean expired entries, append
+ * the new record, and persist. The read-modify-write runs inside the lock so
+ * concurrent creates — from this process or another — serialize instead of
+ * overwriting each other's just-issued sessions.
+ */
 async function createSession(
   sessionsPath: string,
   username: string,
   displayName: string,
   ttlMs: number,
 ): Promise<string> {
-  const token = randomBytes(32).toString('hex')
-  const alive = readSessions(sessionsPath).filter(record => record.expiresAt > Date.now())
-  alive.push({ token, username, displayName, expiresAt: Date.now() + ttlMs })
-  await writeSessions(sessionsPath, alive)
-  return token
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    throw new Error(`sessions: ttlMs must be a positive finite number, got ${String(ttlMs)}`)
+  }
+  await ensureParentDir(sessionsPath)
+  return withFileLock(sessionsPath, async () => {
+    const token = randomBytes(32).toString('hex')
+    const alive = readSessions(sessionsPath).filter(record => record.expiresAt > Date.now())
+    alive.push({ token, username, displayName, expiresAt: Date.now() + ttlMs })
+    await writeSessions(sessionsPath, alive)
+    return token
+  })
 }
 
 /**
- * Validate a token. Expired entries are lazily removed (best-effort write-back
- * so a cleanup failure never turns into a thrown validation error); the token
- * then resolves against the surviving records. Missing, corrupted, or
- * unreadable files read as an empty store, so validation fails closed.
+ * Validate a token. The common case is a pure lock-free read (the rename
+ * commit makes reads atomic); only when the store holds expired entries does
+ * validation take the writer lock to lazily trim them — re-reading inside the
+ * lock so the trim cannot drop a session another writer just issued. Cleanup
+ * is best-effort: a failure defers the trim and never turns a validation into
+ * a thrown error (the identity read above still stands). Missing, corrupted,
+ * or symlinked files read as an empty store, so validation fails closed.
  */
 async function validateSession(sessionsPath: string, token: string): Promise<SessionIdentity | null> {
+  const now = Date.now()
   const records = readSessions(sessionsPath)
-  const alive = records.filter(record => record.expiresAt > Date.now())
+  let alive = records.filter(record => record.expiresAt > now)
   if (alive.length !== records.length) {
-    await writeSessions(sessionsPath, alive).catch(() => {})
+    try {
+      await withFileLock(sessionsPath, async () => {
+        const current = readSessions(sessionsPath)
+        const surviving = current.filter(record => record.expiresAt > Date.now())
+        if (surviving.length !== current.length) await writeSessions(sessionsPath, surviving)
+        alive = surviving
+      })
+    } catch {
+      // Cleanup is best-effort; keep the identity read above.
+    }
   }
   const found = alive.find(record => record.token === token)
   return found ? { username: found.username, displayName: found.displayName } : null
 }
 
-/** Remove a session by token, persisting only when an entry was actually dropped. */
+/**
+ * Remove a session by token under the writer lock, persisting only when an
+ * entry was actually dropped so a no-op logout never rewrites the document.
+ */
 async function removeSession(sessionsPath: string, token: string): Promise<void> {
-  const records = readSessions(sessionsPath)
-  const remaining = records.filter(record => record.token !== token)
-  if (remaining.length !== records.length) {
-    await writeSessions(sessionsPath, remaining)
-  }
+  await ensureParentDir(sessionsPath)
+  await withFileLock(sessionsPath, async () => {
+    const records = readSessions(sessionsPath)
+    const remaining = records.filter(record => record.token !== token)
+    if (remaining.length !== records.length) await writeSessions(sessionsPath, remaining)
+  })
 }
 
 /**
- * Read and validate the sessions document. Missing, corrupted, or unreadable
- * files all read as an empty session set: the store never throws on read, so
- * an auth check cannot be crashed by a bad file — it simply finds no session.
+ * Ensure the parent directory exists so the writer lock's exclusive create
+ * (`<file>.lock`) can land before `writeFileAtomic` gets its own chance to
+ * create it; 0700 matches the user-private data tree (existing directories
+ * keep their mode).
+ */
+async function ensureParentDir(sessionsPath: string): Promise<void> {
+  await mkdir(dirname(sessionsPath), { recursive: true, mode: 0o700 })
+}
+
+/**
+ * Read and validate the sessions document. Missing, corrupted, symlinked, or
+ * otherwise unreadable files all read as an empty session set: the store never
+ * throws on read, so an auth check cannot be crashed by a bad file — it simply
+ * finds no session. A symbolic link is refused outright (defense-in-depth,
+ * like the sibling users store) so a read never follows through to a
+ * link-chosen target.
  */
 function readSessions(sessionsPath: string): SessionRecord[] {
+  if (!isReadableSessionsFile(sessionsPath)) return []
   let content: string
   try {
     content = readFileSync(sessionsPath, 'utf8')
@@ -110,6 +159,18 @@ function readSessions(sessionsPath: string): SessionRecord[] {
     return []
   }
   return parseSessions(content) ?? []
+}
+
+/**
+ * Whether `sessionsPath` resolves to a non-link file. A missing file (ENOENT),
+ * a symbolic link, or any stat failure all count as unreadable — fail-closed.
+ */
+function isReadableSessionsFile(sessionsPath: string): boolean {
+  try {
+    return !lstatSync(sessionsPath).isSymbolicLink()
+  } catch {
+    return false
+  }
 }
 
 /** Whether a parsed JSON value is a map for structural validation. */
