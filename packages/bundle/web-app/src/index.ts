@@ -3,7 +3,8 @@
  * plus the bundle patch (`cordis.patch.yml`, declared by the `dsh.bundle.patch`
  * manifest field). The plugin owns the browser-surface glue: it resolves
  * the built frontend dist (workspace knowledge of this bundle, never user
- * config), mounts the `frontend-static` fallback owner over it, registers the
+ * config), mounts the `frontend-static` fallback owner over it (with the
+ * `/login` SPA history-fallback entry the auth gate redirects to), registers the
  * harness-source and web-surface prompt sections, the bash-visible web runtime
  * variable, the URL line, and the default-browser handoff. App command-line
  * values arrive through the `webStartup` service expressions in the bundle
@@ -230,7 +231,7 @@ export function apply(ctx: Context, config: Config): void {
   const handoffBrowser = config.openBrowser && !launchedThroughSsh(ctx)
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
-  ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
+  ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex(), spaFallback: ['/login'] })
   if (config.surfaceContext) {
     ctx.inject(['systemPrompt'], (promptCtx) => {
       addHarnessSourceSection(promptCtx, SOURCE_ROOT)

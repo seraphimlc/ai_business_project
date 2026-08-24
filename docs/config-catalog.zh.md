@@ -848,14 +848,21 @@ export interface Config {
 需要：`webServer`
 
 ```ts config-catalog
-/** Plugin config: the dist anchor. */
+/** Plugin config: the dist anchor and the explicit SPA history-fallback rule. */
 export interface Config {
   /** Absolute path of index.html inside the dist root. */
   distIndex: string
+  /**
+   * Exact pathnames that render the index (the SPA entry) when no file
+   * exists, instead of 404. The SPA's History-API routes, such as `/login`,
+   * are not real files; each one must be listed here explicitly — never a
+   * broad fallback for every miss.
+   */
+  spaFallback?: string[]
 }
 ```
 
-来源：[`packages/host/frontend-static/src/index.ts:28`](../packages/host/frontend-static/src/index.ts)
+来源：[`packages/host/frontend-static/src/index.ts:29`](../packages/host/frontend-static/src/index.ts)
 
 <a id="deepseek-aidsh-host-webserver"></a>
 
@@ -871,7 +878,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/host/webserver/src/index.ts:59`](../packages/host/webserver/src/index.ts)
+来源：[`packages/host/webserver/src/index.ts:70`](../packages/host/webserver/src/index.ts)
 
 <a id="deepseek-aidsh-invariants"></a>
 
@@ -3040,6 +3047,28 @@ export type ApprovalPolicy = 'ask' | 'never'
 
 来源：[`packages/interaction/user-approval/src/index.ts:177`](../packages/interaction/user-approval/src/index.ts)
 
+<a id="deepseek-aidsh-user-auth"></a>
+
+## `@deepseek-ai/dsh-user-auth`
+
+```ts config-catalog
+/** Plugin config: when and how the gate enforces authentication. */
+export interface UserAuthConfig {
+  /**
+   * Hosts this deployment serves beyond loopback. A non-empty list demands
+   * authentication, so boot fails when no account exists; an empty or missing
+   * list runs the gate fail-open (loopback-only development). Defaults to [].
+   */
+  trustedHosts?: string[]
+  /** Session lifetime in hours; defaults to 24. */
+  sessionTtlHours?: number
+  /** Whether session cookies carry Secure (`__Host-` prefix); defaults to true. */
+  secureCookie?: boolean
+}
+```
+
+来源：[`packages/host/user-auth/src/index.ts:33`](../packages/host/user-auth/src/index.ts)
+
 <a id="deepseek-aidsh-web"></a>
 
 ## `@deepseek-ai/dsh-web`
@@ -3086,7 +3115,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/bundle/web-app/src/index.ts:42`](../packages/bundle/web-app/src/index.ts)
+来源：[`packages/bundle/web-app/src/index.ts:43`](../packages/bundle/web-app/src/index.ts)
 
 <a id="deepseek-aidsh-web-fetch-http"></a>
 
@@ -3233,6 +3262,7 @@ export interface Config {
 - `@deepseek-ai/dsh-client-runtime`（[`packages/client/runtime/src/index.ts`](../packages/client/runtime/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-agent-preset`（[`packages/client/ui-agent-preset/src/index.ts`](../packages/client/ui-agent-preset/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-attachment`（[`packages/client/ui-attachment/src/index.ts`](../packages/client/ui-attachment/src/index.ts)）
+- `@deepseek-ai/dsh-client-ui-auth`（[`packages/client/ui-auth/src/index.ts`](../packages/client/ui-auth/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-brand-official`（[`packages/client/ui-brand-official/src/index.ts`](../packages/client/ui-brand-official/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-commands`（[`packages/client/ui-commands/src/index.ts`](../packages/client/ui-commands/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-conversation`（[`packages/client/ui-conversation/src/index.ts`](../packages/client/ui-conversation/src/index.ts)）

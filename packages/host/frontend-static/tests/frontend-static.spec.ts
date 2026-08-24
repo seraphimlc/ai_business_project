@@ -28,7 +28,7 @@ afterEach(async () => {
 })
 
 /** Write a dist fixture and a two-row cordis.yml, then boot it through the real Loader. */
-async function loadComposition(): Promise<Context> {
+async function loadComposition(spaFallback?: readonly string[]): Promise<Context> {
   root = await mkdtemp(join(tmpdir(), 'dsh-frontend-static-'))
   const dist = join(root, 'dist')
   await mkdir(dist)
@@ -39,6 +39,10 @@ async function loadComposition(): Promise<Context> {
   await writeFile(join(dist, 'manifest.webmanifest'), '{}')
   await mkdir(join(dist, 'empty'))
   const configPath = join(root, 'cordis.yml')
+  const frontendConfig = [`    distIndex: '${distIndex}'`]
+  if (spaFallback !== undefined) {
+    frontendConfig.push(`    spaFallback: [${spaFallback.map(path => `'${path}'`).join(', ')}]`)
+  }
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-host-webserver'",
     '  config:',
@@ -47,7 +51,7 @@ async function loadComposition(): Promise<Context> {
     '- id: frontend',
     "  name: '@deepseek-ai/dsh-host-frontend-static'",
     '  config:',
-    `    distIndex: '${distIndex}'`,
+    ...frontendConfig,
     '',
   ].join('\n'))
 
@@ -141,7 +145,7 @@ describe('real Loader composition', () => {
 
     // Ordinary unknown paths and static-resource misses are empty 404s for
     // both GET and HEAD; neither class can be mistaken for the HTML shell.
-    const ordinaryMisses = ['/no/such/route', '/api/no/such/route', '/empty', '/app.js/child']
+    const ordinaryMisses = ['/no/such/route', '/api/no/such/route', '/empty', '/app.js/child', '/login']
     const assetMisses = [
       '/missing.js',
       '/missing.css',
@@ -170,5 +174,48 @@ describe('real Loader composition', () => {
     await frontendEntry!.fiber?.dispose()
     expect((await request(port, '/no/such/route')).status).toBe(404)
     expect(() => server.registerFallback(() => {})).not.toThrow()
+  })
+
+  it('renders the index for exact configured SPA fallback pathnames and keeps 404 for every other miss', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition(['/login', '/about'])
+    const server = loaded.webServer
+    const port = server.port
+
+    // A configured fallback pathname with no backing file renders the index
+    // entry (with taps) for GET; the query string never participates in the
+    // match, and the list semantics cover every listed path.
+    const untap = server.tapIndex(html => html.replace('<head>', '<head><script>window.__T__=1</script>'))
+    for (const path of ['/login', '/login?next=/session/42', '/about']) {
+      const got = await request(port, path)
+      expect(got.status).toBe(200)
+      expect(got.type).toBe('text/html; charset=utf-8')
+      expect(got.body).toContain('__T__')
+      expect(got.body).toContain('shell')
+    }
+    expect(await request(port, '/login', { method: 'HEAD' })).toEqual({
+      status: 200,
+      type: 'text/html; charset=utf-8',
+      body: '',
+    })
+    untap()
+    expect((await request(port, '/login')).body).not.toContain('__T__')
+
+    // The match is exact pathname equality: a trailing slash names a different
+    // path (the client's own login detection is `/login`), and any unlisted
+    // path stays an empty 404.
+    expect(await request(port, '/login/')).toEqual({ status: 404, type: null, body: '' })
+    expect(await request(port, '/other')).toEqual({ status: 404, type: null, body: '' })
+
+    // A real file at a fallback pathname wins: the fallback applies only to
+    // missing targets, so an actual file is served, not the index.
+    await writeFile(join(root!, 'dist', 'login'), 'FILE')
+    expect(await request(port, '/login')).toMatchObject({ status: 200, type: 'application/octet-stream', body: 'FILE' })
+    await rm(join(root!, 'dist', 'login'))
+
+    // A missing index follows the same empty-404 contract on fallback paths as
+    // on the entry paths.
+    await rm(join(root!, 'dist', 'index.html'))
+    expect(await request(port, '/login')).toEqual({ status: 404, type: null, body: '' })
+    expect(await request(port, '/about')).toEqual({ status: 404, type: null, body: '' })
   })
 })
