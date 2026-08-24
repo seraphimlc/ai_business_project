@@ -1,8 +1,9 @@
 /**
  * @deepseek-ai/dsh-host-webserver — Web route-registration plugin: a node:http
  * server plus the `webServer` service (HTTP and upgrade route registries, the
- * structured index injection table with raw transform taps behind it, and the
- * single fallback seat for everything no route claims). Knows no harness concepts and serves no files; the composing
+ * structured index injection table with raw transform taps behind it, the
+ * single fallback seat for everything no route claims, and the optional
+ * single-seat authenticate gate running before every dispatch). Knows no harness concepts and serves no files; the composing
  * application's frontend plugin owns dist serving through the fallback hook.
  * Web shape only — Electron loads dist over file:// and carries fetch over an
  * IPC bridge. This package never prints: the URL line belongs to the shell.
@@ -55,6 +56,16 @@ export interface WebUpgradeRoute {
   handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void | Promise<void>
 }
 
+/**
+ * Authentication decision: 'allow' passes the request through to dispatch;
+ * otherwise an HTTP status with an optional JSON body (401) or a redirect
+ * (302). Upgrade requests map any non-'allow' decision to a 403 rejection.
+ */
+export type AuthDecision =
+  | 'allow'
+  | { status: 401; json?: unknown }
+  | { status: 302; location: string }
+
 /** Gateway config: the listen address. */
 export interface Config {
   /** Listen host; the two supported values are loopback and all-interfaces. */
@@ -82,6 +93,7 @@ export class WebServer extends Service {
   private readonly upgradedSockets = new Set<Duplex>()
   private readonly indexTaps: ((html: string) => string)[] = []
   private fallback: WebRoute['handler'] | undefined
+  private authenticateHook: ((req: IncomingMessage) => Promise<AuthDecision>) | undefined
   private server!: Server
   private listenedPort!: number
 
@@ -145,6 +157,22 @@ export class WebServer extends Service {
   }
 
   /**
+   * Claim the single authentication seat: the hook answering every request and
+   * upgrade before route dispatch. One owner only — a second registration
+   * throws, because two gates cannot compose. The hook is optional: without an
+   * owner every request dispatches exactly as before.
+   * @param fn - async authentication decision given the raw request.
+   * @returns the disposer releasing the seat.
+   */
+  setAuthenticate(fn: (req: IncomingMessage) => Promise<AuthDecision>): () => void {
+    if (this.authenticateHook !== undefined) {
+      throw new Error('webserver: authenticate hook already registered')
+    }
+    this.authenticateHook = fn
+    return () => { this.authenticateHook = undefined }
+  }
+
+  /**
    * Register a raw-HTML index transform, the escape hatch for markup no
    * {@link IndexInjection} row expresses: {@link renderIndex} applies taps in
    * registration order after rendering the structured rows.
@@ -165,6 +193,20 @@ export class WebServer extends Service {
       /* v8 ignore next -- `?? '/'` arm: node:http always sets url on server
       requests; the field is only optional on the client-side IncomingMessage type */
       const rawPath = new URL(req.url ?? '/', 'http://x').pathname
+      const hook = this.authenticateHook
+      if (hook !== undefined) {
+        const decision = await hook(req)
+        if (decision !== 'allow') {
+          if (decision.status === 401) {
+            res.writeHead(401, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify(decision.json ?? { error: 'unauthorized' }))
+          } else {
+            res.writeHead(302, { Location: decision.location })
+            res.end()
+          }
+          return
+        }
+      }
       const route = this.match(rawPath)
       if (route !== undefined) {
         await route.handler(req, res)
@@ -194,38 +236,65 @@ export class WebServer extends Service {
       })
     })
     this.server.on('upgrade', (req, socket, head) => {
-      const onError = (error: Error): void => {
-        this.ctx.logger.warn(error)
-        socket.destroy()
-      }
-      socket.on('error', onError)
-      socket.once('close', () => {
-        socket.off('error', onError)
-        this.upgradedSockets.delete(socket)
-      })
-      let route: WebUpgradeRoute | undefined
-      try {
-        /* v8 ignore next -- node:http always sets url on server requests. */
-        route = this.upgrades.get(new URL(req.url ?? '/', 'http://x').pathname)
-      } catch (error) {
-        this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
-        socket.destroy()
-        return
-      }
-      if (route === undefined) {
-        socket.destroy()
-        return
-      }
-      this.upgradedSockets.add(socket)
-      try {
-        Promise.resolve(route.handler(req, socket, head)).catch((error: unknown) => {
+      void (async (): Promise<void> => {
+        const onError = (error: Error): void => {
+          this.ctx.logger.warn(error)
+          socket.destroy()
+        }
+        socket.on('error', onError)
+        socket.once('close', () => {
+          socket.off('error', onError)
+          this.upgradedSockets.delete(socket)
+        })
+        // The gate runs before the upgrade-route lookup: any non-'allow'
+        // decision rejects the handshake with the same 403 the connection
+        // client writes for its trust-fence refusal (byte-identical), and a
+        // throwing hook destroys the socket instead of crashing the process.
+        const hook = this.authenticateHook
+        if (hook !== undefined) {
+          try {
+            const decision = await hook(req)
+            if (decision !== 'allow') {
+              socket.end([
+                'HTTP/1.1 403 Forbidden',
+                'Connection: close',
+                'Content-Type: text/plain; charset=utf-8',
+                'Content-Length: 9',
+                '',
+                'forbidden',
+              ].join('\r\n'))
+              return
+            }
+          } catch (error) {
+            this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
+            socket.destroy()
+            return
+          }
+        }
+        let route: WebUpgradeRoute | undefined
+        try {
+          /* v8 ignore next -- node:http always sets url on server requests. */
+          route = this.upgrades.get(new URL(req.url ?? '/', 'http://x').pathname)
+        } catch (error) {
           this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
           socket.destroy()
-        })
-      } catch (error) {
-        this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
-        socket.destroy()
-      }
+          return
+        }
+        if (route === undefined) {
+          socket.destroy()
+          return
+        }
+        this.upgradedSockets.add(socket)
+        try {
+          Promise.resolve(route.handler(req, socket, head)).catch((error: unknown) => {
+            this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
+            socket.destroy()
+          })
+        } catch (error) {
+          this.ctx.logger.warn(error instanceof Error ? error : new Error(String(error)))
+          socket.destroy()
+        }
+      })()
     })
 
     await new Promise<void>((resolve, reject) => {

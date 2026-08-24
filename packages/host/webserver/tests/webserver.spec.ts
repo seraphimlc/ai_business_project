@@ -2,7 +2,8 @@
  * REAL-composition coverage: a test-only cordis.yml booted through the
  * vendored Loader mounts the webserver row, and every assertion observes the
  * user-visible HTTP surface of the running server (routing precedence, index
- * taps, fallback-seat semantics, per-request error containment, teardown).
+ * taps, fallback-seat semantics, authenticate-hook semantics, per-request error
+ * containment, teardown).
  */
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -15,7 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import HttpServer, { renderIndexInjections } from '../src/index.ts'
+import HttpServer, { renderIndexInjections, type AuthDecision } from '../src/index.ts'
 
 let root: string | undefined
 let context: Context | undefined
@@ -198,6 +199,101 @@ describe('real Loader composition', () => {
     expect(upgradedServerClosed).toBe(true)
     upgraded.destroy()
     await expect(request(port, '/probe')).rejects.toThrow()
+  })
+
+  it('runs a single-seat authenticate hook before HTTP and upgrade dispatch', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition()
+    const server = loaded.webServer
+    const port = server.port
+
+    server.register({ kind: 'exact', path: '/probe', handler: (_req, res) => { res.writeHead(200); res.end('EXACT') } })
+    server.registerUpgrade({
+      path: '/events',
+      handler: (_req, socket) => {
+        socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: dsh-test\r\n\r\n')
+      },
+    })
+
+    // Decision table: 'allow' passes through, explicit 401 JSON denies, a bare
+    // 401 falls back to the default JSON body, 302 redirects, and the WS
+    // decision/throw can be switched between calls.
+    let wsDecision: AuthDecision = 'allow'
+    let wsThrow = false
+    const release = server.setAuthenticate(async (req) => {
+      const path = new URL(req.url ?? '/', 'http://x').pathname
+      if (path.startsWith('/events')) {
+        if (wsThrow) throw new Error('test authenticate failure')
+        return wsDecision
+      }
+      if (path === '/deny') return { status: 401, json: { error: 'unauthorized' } }
+      if (path === '/deny-plain') return { status: 401 }
+      if (path === '/redirect') return { status: 302, location: '/login?next=%2Fprobe' }
+      return 'allow'
+    })
+
+    // Single-seat: a second registration throws while the first is live.
+    expect(() => server.setAuthenticate(async () => 'allow')).toThrow(/authenticate hook already registered/)
+
+    // The hook runs before route dispatch and 'allow' passes through untouched.
+    expect(await request(port, '/probe')).toMatchObject({ status: 200, body: 'EXACT' })
+
+    // Deny answers before the route or fallback ever sees the request: an
+    // explicit JSON body, the default body for a bare 401, and a redirect.
+    expect(await request(port, '/deny')).toMatchObject({ status: 401, body: '{"error":"unauthorized"}' })
+    expect(await request(port, '/deny-plain')).toMatchObject({ status: 401, body: '{"error":"unauthorized"}' })
+    const redirect = await fetch(`http://127.0.0.1:${String(port)}/redirect`, { redirect: 'manual' })
+    expect(redirect.status).toBe(302)
+    expect(redirect.headers.get('location')).toBe('/login?next=%2Fprobe')
+
+    // Upgrade path: 'allow' proceeds to the upgrade route (101 handshake)…
+    const upgraded = await upgrade(port, '/events')
+    upgraded.destroy()
+
+    // …a deny writes the 403 rejection and closes the socket without ever
+    // reaching the upgrade-route lookup…
+    wsDecision = { status: 401 }
+    const denied = connect(port, '127.0.0.1')
+    denied.on('error', () => { /* The server-side close is the fixture outcome. */ })
+    const deniedChunks: Buffer[] = []
+    denied.on('data', (chunk: Buffer) => { deniedChunks.push(chunk) })
+    await once(denied, 'connect')
+    const deniedClosed = once(denied, 'close')
+    denied.write([
+      'GET /events HTTP/1.1',
+      `Host: 127.0.0.1:${String(port)}`,
+      'Connection: Upgrade',
+      'Upgrade: dsh-test',
+      '',
+      '',
+    ].join('\r\n'))
+    await deniedClosed
+    const deniedBody = Buffer.concat(deniedChunks).toString()
+    expect(deniedBody).toContain('403 Forbidden')
+    expect(deniedBody).toContain('forbidden')
+
+    // …and a throwing hook destroys the socket instead of crashing the server.
+    wsThrow = true
+    const failed = connect(port, '127.0.0.1')
+    failed.on('error', () => { /* The server-side close is the fixture outcome. */ })
+    const failedChunks: Buffer[] = []
+    failed.on('data', (chunk: Buffer) => { failedChunks.push(chunk) })
+    await once(failed, 'connect')
+    const failedClosed = once(failed, 'close')
+    failed.write([
+      'GET /events HTTP/1.1',
+      `Host: 127.0.0.1:${String(port)}`,
+      'Connection: Upgrade',
+      'Upgrade: dsh-test',
+      '',
+      '',
+    ].join('\r\n'))
+    await failedClosed
+    expect(Buffer.concat(failedChunks).toString()).not.toContain('403')
+    expect(await request(port, '/probe')).toMatchObject({ status: 200, body: 'EXACT' })
+
+    // The disposer releases the seat, restoring registrability.
+    release()
+    expect(() => server.setAuthenticate(async () => 'allow')).not.toThrow()
   })
 
   it('collects injection rows fresh per render and layers taps over the rendered rows', { timeout: 60_000 }, async () => {
