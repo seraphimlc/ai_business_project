@@ -7,6 +7,8 @@
  * later chunk.
  */
 
+export { hashPassword, verifyPassword } from './hash.ts'
+
 /**
  * Plugin entry. Empty for now: the auth flow chunk fills in the cordis plugin
  * registration (config, user store, and the webserver authenticate seat).
