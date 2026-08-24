@@ -57,12 +57,13 @@ const LOGIN_PAGE = '/login'
 
 /** Paths the gate never protects; their handlers own their own behavior. */
 const PUBLIC_PATHS: ReadonlySet<string> = new Set([
+  LOGIN_PAGE,
   '/api/auth/login',
   '/api/auth/logout',
   '/api/auth/status',
 ])
-/** Public static prefix for plugin assets. */
-const PLUGIN_ASSETS_PREFIX = '/plugins/'
+/** Public static prefixes: plugin assets and bundled frontend assets. */
+const PUBLIC_PATH_PREFIXES: readonly string[] = ['/plugins/', '/assets/']
 
 /** Whether `value` is a usable `{ username, password }` login payload. */
 function isCredentials(value: unknown): value is { username: string; password: string } {
@@ -144,8 +145,9 @@ export function apply(ctx: Context, config: UserAuthConfig): void {
     const authenticate = async (req: IncomingMessage): Promise<AuthDecision> => {
       if (failOpen) return 'allow'
       /* v8 ignore next -- node:http always sets url on server requests */
-      const pathname = new URL(req.url ?? '/', 'http://x').pathname
-      if (PUBLIC_PATHS.has(pathname) || pathname.startsWith(PLUGIN_ASSETS_PREFIX)) return 'allow'
+      const rawUrl = req.url ?? '/'
+      const pathname = new URL(rawUrl, 'http://x').pathname
+      if (PUBLIC_PATHS.has(pathname) || PUBLIC_PATH_PREFIXES.some(prefix => pathname.startsWith(prefix))) return 'allow'
       const token = readSessionToken(req.headers.cookie)
       if (token !== undefined) {
         const identity = await sessions.validate(token)
@@ -155,7 +157,9 @@ export function apply(ctx: Context, config: UserAuthConfig): void {
         }
       }
       if (req.headers.upgrade !== undefined) return { status: 401 }
-      if (acceptsHtml(req.headers.accept)) return { status: 302, location: LOGIN_PAGE }
+      if (acceptsHtml(req.headers.accept)) {
+        return { status: 302, location: `${LOGIN_PAGE}?next=${encodeURIComponent(rawUrl)}` }
+      }
       return { status: 401, json: { error: 'unauthorized' } }
     }
 

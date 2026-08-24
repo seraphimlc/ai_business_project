@@ -195,26 +195,44 @@ describe('user-auth gate composition', () => {
 
     const html = await request(port, '/api/anything', { redirect: 'manual', headers: { accept: 'text/html' } })
     expect(html.status).toBe(302)
-    expect(html.headers.get('location')).toBe('/login')
+    expect(html.headers.get('location')).toBe('/login?next=%2Fapi%2Fanything')
 
     const json = await request(port, '/api/anything')
     expect(json.status).toBe(401)
     expect(JSON.parse(json.body)).toEqual({ error: 'unauthorized' })
   })
 
-  it('lets a valid session cookie through and keeps public plugin assets open', { timeout: 60_000 }, async () => {
+  it('passes the /login page through unauthenticated (no redirect loop)', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition({ trustedHosts: ['dsh.visitworld.me'] }, seedUser)
+    const server = loaded.webServer
+    const port = server.port
+    server.register({ kind: 'exact', path: '/login', handler: (_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('LOGIN PAGE') } })
+
+    // HTML navigation to /login must reach the page: a gate that redirects
+    // /login back to /login would loop forever. Both Accept shapes pass.
+    const page = await request(port, '/login', { headers: { accept: 'text/html' } })
+    expect(page.status).toBe(200)
+    expect(page.body).toBe('LOGIN PAGE')
+    expect((await request(port, '/login')).status).toBe(200)
+  })
+
+  it('lets a valid session cookie through and keeps public plugin and asset prefixes open', { timeout: 60_000 }, async () => {
     const loaded = await loadComposition({ trustedHosts: ['dsh.visitworld.me'] }, seedUser)
     const server = loaded.webServer
     const port = server.port
     server.register({ kind: 'exact', path: '/probe', handler: (_req, res) => { res.writeHead(200); res.end('EXACT') } })
     server.register({ kind: 'prefix', path: '/plugins', handler: (_req, res) => { res.writeHead(200); res.end('PLUGINS') } })
+    server.register({ kind: 'prefix', path: '/assets', handler: (_req, res) => { res.writeHead(200); res.end('ASSETS') } })
 
     const ok = await login(port, JSON.stringify({ username: USERNAME, password: PASSWORD }))
     const cookie = `__Host-dsh_session=${tokenFromCookie(ok.setCookie ?? '')}`
     expect((await request(port, '/probe', { headers: { cookie } })).status).toBe(200)
 
-    // /plugins/* is a public static prefix: unauthenticated access passes the gate.
+    // /plugins/* and /assets/* are public static prefixes: unauthenticated
+    // access passes the gate, even with an HTML Accept (no bogus redirect).
     expect((await request(port, '/plugins/x.js')).status).toBe(200)
+    expect((await request(port, '/assets/x.js')).status).toBe(200)
+    expect((await request(port, '/assets/app.js', { headers: { accept: 'text/html' } })).status).toBe(200)
   })
 
   it('rejects an unauthenticated WebSocket upgrade with 403', { timeout: 60_000 }, async () => {
