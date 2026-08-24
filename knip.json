@@ -190,6 +190,17 @@
         "tests/**/*.tsx"
       ]
     },
+    "packages/client/ui-auth": {
+      "entry": [
+        "tests/**/*.spec.ts",
+        "tests/**/*.spec.tsx"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/**/*.tsx"
+      ]
+    },
     "website": {
       "project": [
         "**/*.ts"
