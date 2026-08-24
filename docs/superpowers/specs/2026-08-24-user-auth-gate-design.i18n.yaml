@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/superpowers/specs/2026-08-24-user-auth-gate-design.md
-2026-08-24-user-auth-gate-design.md: 8099856d9ecccf7e0a5ec7fe34a94aeefc6a059d
-2026-08-24-user-auth-gate-design.zh.md: 0332a93d90cab8f3afbc71ee0763d7c9f527cf8e
+2026-08-24-user-auth-gate-design.md: 0962d5a402cc8f477a4d54b90338ee4453cbcf5c
+2026-08-24-user-auth-gate-design.zh.md: a789c30e32cd6ec3d1e6ac86360d2dbcc830a898

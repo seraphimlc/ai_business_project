@@ -2,8 +2,7 @@
 
 English | [中文](2026-08-24-user-auth-gate-design.zh.md)
 
-> 状态：已与用户确认需求与架构。本文档是实现的权威依据。
-> 目标部署：`dsh.visitworld.me`（visitworld.me 服务器，Ubuntu，nginx 反代 + Certbot TLS）。
+> 状态：已与用户确认需求与架构。本文档是实现的权威依据。目标部署：`dsh.visitworld.me`（visitworld.me 服务器，Ubuntu，nginx 反代 + Certbot TLS）。
 
 ## 背景与目标
 
