@@ -58,7 +58,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 - 密码哈希：**Node 内置 `crypto.scrypt`**（`N=16384, r=8, p=1`——Node 默认参数，内存 16MB < 默认 maxmem 32MB；随机 16 字节 salt，输出 64 字节），格式 `$scrypt$<salt-hex>$<hash-hex>`。不引入 bcrypt 外部依赖，保持轻量。
 - 文件安全：启动时用 Node `lstat` 校验为普通文件（拒绝 symlink/hardlink——参考 codex-agent-protocol 仓库 `scripts/init.py` 的安全模式，但此处用 Node 标准库实现），Unix 下 chmod 600。`$DSH_HOME/auth-sessions.json` 同样采用临时文件 + 原子 `rename` + chmod 600。
 - **再读策略**：users.json 每次登录时重新读取（而非仅启动加载），保证运行中执行 `dsh user add` / `remove` 立即生效，避免运维困惑。
-- **无有效账号时的门禁策略（fail-closed）**：webServer 绑定 `0.0.0.0`（公网）且 users.json 缺失/损坏/无账号 → **拒绝启动 web profile**（`dsh web` 报错退出，提示运行 `dsh user add`），绝不 fail-open。仅当绑定 `127.0.0.1`（loopback，本地开发）时允许 fail-open（保持可访问并告警）。
+- **无有效账号时的门禁策略（fail-closed）**：`--host 0.0.0.0` 已被 web-app startup 明确拒绝（`packages/bundle/web-app/src/startup.ts:74-76`，"intentionally not supported yet for safety"），公网部署必然走 `127.0.0.1` + nginx 反代。因此 fail-closed 的触发条件不能依赖 `--host`，改为：**存在 `--trusted-host`**（部署者声明对外提供服务）且 users.json 缺失/损坏/无账号 → **拒绝启动 web profile**（`dsh web` 报错退出，提示运行 `dsh user add`），绝不 fail-open。仅当既无 `--trusted-host` 又无有效账号时（纯本地开发）允许 fail-open（保持可访问并告警）。
 
 ### 账号管理 CLI
 
@@ -100,7 +100,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 2. **单席位**：setter + disposer；重复设置抛错（与 `registerFallback` 一致）。
 3. **调用点**：`handle()` 在路由匹配**前**调用一次；upgrade 事件处理器在 upgrade 路由分派**前**调用一次。
 4. **安装时机**：必须在监听（`[Service.init]` 的 `listen`）之前安装——激活顺序保证首个请求即被拦截，配套一条启动顺序集成测试。
-5. **WS 拒绝**：复用 `packages/client/connection/src/websocket-downlink.ts:144` 的 `rejectWebSocketUpgrade(socket)` 写 401 后 destroy。
+5. **WS 拒绝**：复用 `packages/client/connection/src/websocket-downlink.ts:144` 的 `rejectWebSocketUpgrade(socket)`（写 HTTP 403 后 close）——与 connection 插件现有 untrusted 拒绝行为一致（`isTrustedApiRequest` 失败同样走 403）。
 
 钩子由 `user-auth` 插件在 init 时注入。`user-auth` 同时注册 `exact` 路由 `/api/auth/login`、`/api/auth/logout`。
 
@@ -115,7 +115,9 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 | `/login`（页面） | 放行 |
 | `/plugins/*`（client 插件 bundle）、`/assets/*`、其他静态资源 | 放行（bundle 加载必需） |
 | 其他 API（`/api/*` 非 auth） | 401 JSON |
-| WS upgrade（`/api/events.mux`、`/api/events.host`） | 拒绝（`rejectWebSocketUpgrade`） |
+| WS upgrade（`/api/events.mux`、`/api/events.host`） | 拒绝（复用 `rejectWebSocketUpgrade`，写 403） |
+
+决策表按上到下优先级执行；无匹配行且非页面 → 401（catch-all）。已认证请求全部放行，`req` 上附加 `req.user = { username, displayName }`（TypeScript 通过模块扩展声明 `IncomingMessage.user`）。
 
 ## 第二节：登录页 UI
 
@@ -130,7 +132,7 @@ UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 
 
 ## 第三节：WebSocket 认证细节
 
-- `connection` 插件的 `WebSocketDownlinks` 使用 `WebServer.registerUpgrade` 注册 upgrade 路由（路径 `/api/ws` 或类似）。
+- `connection` 插件的 `WebSocketDownlinks` 使用 `WebServer.registerUpgrade` 注册 upgrade 路由：`/api/events.mux`（`MUX_EVENTS_PATH`）与 `/api/events.host`（`HOST_EVENTS_PATH`），见 `packages/client/connection/src/api-path.ts`。
 - `user-auth` 的 `authenticate` 钩子在 upgrade 分派前执行（见第一节拦截方案），cookie 校验失败即拒绝握手。
 - 不改变 WS 协议本身；已认证连接的行为与现在完全一致。
 
@@ -159,7 +161,7 @@ UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 
 - **启动顺序**：`authenticate` 钩子在监听前安装，首个请求即被拦截。
 - WS upgrade：未认证拒绝（`rejectWebSocketUpgrade`）、已认证放行。
 - CLI：`dsh user add/set-password/list/remove` 全流程（临时 `$DSH_HOME`）、**移除最后一个账号后公网启动被拒**。
-- 会话过期：API 401 → 浏览器跳转 `/login`；WS 被拒提示。
+- 会话过期：API 401 → 浏览器跳转 `/login`；WS 被拒（403）提示。
 
 ### UI 测试
 
@@ -179,7 +181,7 @@ UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 
 6. 验证：
    - `curl -I https://dsh.visitworld.me/` 返回 302 → `/login`（不再是 401 basic auth）。
    - 浏览器登录后可用；登出后访问被拒。
-   - WebSocket 连接在未登录时被拒、登录后正常（agent 会话可用）。
+   - WebSocket 连接在未登录时被拒（403）、登录后正常（agent 会话可用）。
    - 未登录访问 `/api/...` 返回 401；`/plugins/...` 可加载。
 7. 回滚预案：保留旧 dsh 产物与 nginx 配置备份，任一步失败即恢复。
 
