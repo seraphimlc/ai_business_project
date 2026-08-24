@@ -38,13 +38,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 const OVERLAY_ID = 'login'
 
 /**
- * Whether the address bar names the login surface: the host's exact redirect
- * target, or a sub-path of it.
+ * Whether the address bar names the login surface. Exact match on the host's
+ * redirect target only — a prefix test would also claim `/loginn` and
+ * `/login/anything`, which are not login pages. The host appends `next` as a
+ * query, so `pathname` never carries it.
  * @param pathname - the current `window.location.pathname`.
  * @returns true while the overlay should be mounted.
  */
 function isLoginPath(pathname: string): boolean {
-  return pathname === '/login' || pathname.startsWith('/login')
+  return pathname === '/login'
 }
 
 /** Required services: the slot registry and the locale dictionary registry. */

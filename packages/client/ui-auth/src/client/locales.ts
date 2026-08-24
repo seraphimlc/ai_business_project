@@ -9,6 +9,7 @@ export const zh = {
   'form.password': '密码',
   'form.submit': '登录',
   'error.invalidCredentials': '用户名或密码错误',
+  'error.network': '无法连接服务器，请稍后重试',
   'hint.noAccount': '未配置账号，运行 `dsh user add`',
 } satisfies Record<string, string>
 
@@ -21,5 +22,6 @@ export const en = {
   'form.password': 'Password',
   'form.submit': 'Sign in',
   'error.invalidCredentials': 'Invalid username or password',
+  'error.network': 'Cannot reach the server, please try again later',
   'hint.noAccount': 'No account configured — run `dsh user add`',
 } satisfies Record<LoginKey, string>

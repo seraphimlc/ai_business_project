@@ -118,6 +118,7 @@ describe('browser plugin', () => {
           'form.password': '密码',
           'form.submit': '登录',
           'error.invalidCredentials': '用户名或密码错误',
+          'error.network': '无法连接服务器，请稍后重试',
           'hint.noAccount': '未配置账号，运行 `dsh user add`',
         },
         en: {
@@ -125,6 +126,7 @@ describe('browser plugin', () => {
           'form.password': 'Password',
           'form.submit': 'Sign in',
           'error.invalidCredentials': 'Invalid username or password',
+          'error.network': 'Cannot reach the server, please try again later',
           'hint.noAccount': 'No account configured — run `dsh user add`',
         },
       },
@@ -164,12 +166,13 @@ describe('browser plugin', () => {
     expect(slots.entries('shell.overlay')).toHaveLength(0)
   })
 
-  it('treats /login sub-paths as the login surface', async () => {
-    stubLocation({ pathname: '/login/sso' })
-    const { ctx, slots } = await bench()
-    await ctx.plugin({ inject: [...inject], apply }).await()
-    expect(slots.entries('shell.overlay')).toHaveLength(1)
-    expect(slots.entries('shell.overlay')[0]?.options).toMatchObject({ id: 'login' })
+  it('mounts nothing on /login look-alike paths (exact match only)', async () => {
+    for (const pathname of ['/login/sso', '/loginn', '/loginx']) {
+      stubLocation({ pathname })
+      const { ctx, slots } = await bench()
+      await ctx.plugin({ inject: [...inject], apply }).await()
+      expect(slots.entries('shell.overlay')).toHaveLength(0)
+    }
   })
 
   it('host half apply runs without throwing; the browser half ships via ./client', () => {
@@ -194,14 +197,20 @@ describe('browser plugin', () => {
 
 describe('LoginPage', () => {
   it('renders username and password fields with an enabled submit button once the gate reports configured', async () => {
-    stubFetch({ '/api/auth/status': configuredStatus })
+    const { calls } = stubFetch({ '/api/auth/status': configuredStatus })
     stubLocation({ pathname: '/login' })
     render(createElement(LoginPage, { t }))
     const username = await screen.findByLabelText('用户名')
     expect(username).toHaveProperty('disabled', false)
-    expect(screen.getByLabelText('密码')).toHaveProperty('disabled', false)
+    expect(username).toHaveProperty('required', true)
+    expect(screen.getByLabelText('密码')).toHaveProperty('required', true)
     expect(screen.getByRole('button', { name: '登录' })).toHaveProperty('disabled', false)
     expect(screen.queryByRole('alert')).toBeNull()
+    // The username field takes focus on mount.
+    expect(document.activeElement).toBe(username)
+    // The status probe rides an abortable signal (timeout).
+    const status = calls.find(call => call.url === '/api/auth/status')
+    expect(status?.init?.signal).toBeInstanceOf(AbortSignal)
   })
 
   it('shows the localized error and keeps the page on a rejected login', async () => {
@@ -229,6 +238,24 @@ describe('LoginPage', () => {
     expect(JSON.parse(login?.init?.body as string)).toEqual({ username: 'alice', password: 'wrong' })
   })
 
+  it('shows a connection error (not invalid credentials) when the login request cannot reach the server', async () => {
+    const { calls } = stubFetch({
+      '/api/auth/status': configuredStatus,
+      '/api/auth/login': () => Promise.reject(new TypeError('Failed to fetch')),
+    })
+    const location = stubLocation({ pathname: '/login' })
+    render(createElement(LoginPage, { t }))
+    await screen.findByRole('button', { name: '登录' })
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'alice' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'pw' } })
+    fireEvent.click(screen.getByRole('button', { name: '登录' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe('无法连接服务器，请稍后重试')
+    expect(location.href).toBe('')
+    expect(calls.filter(call => call.url === '/api/auth/login')).toHaveLength(1)
+  })
+
   it('navigates the whole page to the next target (or /) after a successful login', async () => {
     stubFetch({
       '/api/auth/status': configuredStatus,
@@ -250,6 +277,28 @@ describe('LoginPage', () => {
     fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'pw' } })
     fireEvent.click(screen.getByRole('button', { name: '登录' }))
     await waitFor(() => { expect(noNext.href).toBe('/') })
+  })
+
+  it('only navigates to same-origin path targets from the next query', async () => {
+    stubFetch({
+      '/api/auth/status': configuredStatus,
+      '/api/auth/login': () => jsonResponse({ ok: true }),
+    })
+    for (const [search, expected] of [
+      ['?next=//evil.example', '/'],
+      ['?next=https%3A%2F%2Fevil.example', '/'],
+      ['?next=relative/path', '/'],
+      ['?next=%2Fworkspace', '/workspace'],
+    ] as Array<[string, string]>) {
+      const location = stubLocation({ pathname: '/login', search })
+      render(createElement(LoginPage, { t }))
+      await screen.findByRole('button', { name: '登录' })
+      fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'alice' } })
+      fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'pw' } })
+      fireEvent.click(screen.getByRole('button', { name: '登录' }))
+      await waitFor(() => { expect(location.href).toBe(expected) })
+      cleanup()
+    }
   })
 
   it('shows the no-account hint and disables the form when the gate has no accounts', async () => {

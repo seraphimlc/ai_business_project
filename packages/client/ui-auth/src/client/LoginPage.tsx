@@ -18,9 +18,18 @@ type GateStatus = 'loading' | 'configured' | 'unconfigured'
 /** Full overlay props: the login namespace's `t` seat. */
 export type LoginPageProps = PropsLocale<'login'>
 
-/** The host's redirect target for a successful login (defaults to the root). */
+/** How long the status probe waits before giving up (the form then enables). */
+const STATUS_TIMEOUT_MS = 5_000
+
+/**
+ * The host's redirect target for a successful login. Only a same-origin
+ * path is honored — anything else (protocol-relative `//`, absolute URLs,
+ * relative fragments) falls back to the root, so a tampered `next` query can
+ * never turn the login into an open redirect.
+ */
 function nextTarget(): string {
-  return new URLSearchParams(window.location.search).get('next') ?? '/'
+  const next = new URLSearchParams(window.location.search).get('next')
+  return next !== null && next.startsWith('/') && !next.startsWith('//') ? next : '/'
 }
 
 /**
@@ -41,7 +50,7 @@ export function LoginPage({ t }: LoginPageProps) {
   // is no gate to block on.
   useEffect(() => {
     let cancelled = false
-    void fetch('/api/auth/status', { credentials: 'include' })
+    void fetch('/api/auth/status', { credentials: 'include', signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) })
       .then(response => response.json() as Promise<{ configured?: unknown }>)
       .then((body) => {
         if (!cancelled) setStatus(body.configured === true ? 'configured' : 'unconfigured')
@@ -75,7 +84,10 @@ export function LoginPage({ t }: LoginPageProps) {
         // with the session cookie the login response just set.
         window.location.href = nextTarget()
       } catch {
-        setError(t('error.invalidCredentials'))
+        // The request never got an HTTP answer (server unreachable, network
+        // drop, or abort) — that is a connectivity problem, not bad
+        // credentials; do not mislead the user into retrying the password.
+        setError(t('error.network'))
       } finally {
         setSubmitting(false)
       }
@@ -93,6 +105,8 @@ export function LoginPage({ t }: LoginPageProps) {
         type="text"
         value={username}
         autoComplete="username"
+        required
+        autoFocus
         disabled={!enabled}
         onChange={(event) => { setUsername(event.currentTarget.value) }}
       />
@@ -103,6 +117,7 @@ export function LoginPage({ t }: LoginPageProps) {
         type="password"
         value={password}
         autoComplete="current-password"
+        required
         disabled={!enabled}
         onChange={(event) => { setPassword(event.currentTarget.value) }}
       />
