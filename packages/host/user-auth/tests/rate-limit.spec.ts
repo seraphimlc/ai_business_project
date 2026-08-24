@@ -1,12 +1,13 @@
 /**
  * Login rate-limiter contract: a per-source sliding window over failed login
  * attempts (the `limit+1`-th failure inside the window is rejected, the window
- * resets once it expires, and expired records are lazily pruned so the in-memory
- * table stays bounded) plus the X-Forwarded-For trust chain — a loopback peer's
- * XFF header is trusted (rightmost entry, the address nginx appended), any
- * other peer's XFF is ignored in favor of the socket address, and an unknown
- * socket address resolves to undefined. Requests are real IncomingMessage
- * objects over a stub socket, so the header plumbing is exercised, not mocked.
+ * resets once it expires, expired records are lazily pruned, and each key's
+ * stored history is truncated to `limit+1` records so the in-memory table stays
+ * bounded) plus the X-Forwarded-For trust chain — a loopback peer's XFF header
+ * is trusted (rightmost entry, the address nginx appended), any other peer's
+ * XFF is ignored in favor of the socket address, and an unknown socket address
+ * resolves to undefined. Requests are real IncomingMessage objects over a stub
+ * socket, so the header plumbing is exercised, not mocked.
  */
 
 import { IncomingMessage } from 'node:http'
@@ -65,6 +66,21 @@ describe('login rate limiter', () => {
       expect(limiter.recordFailure('a', 2_400)).toBe(false)
     })
 
+    it('stores at most limit+1 failure records per key, truncating the oldest', () => {
+      const limiter = createRateLimiter({ limit: 3, windowMs: 60_000 })
+      for (let index = 0; index < 100; index++) limiter.recordFailure('a', index * 10)
+      // All 100 attempts land inside the window, so the verdict stays "denied"…
+      expect(limiter.recordFailure('a', 1_000)).toBe(false)
+      // …but storage is truncated to the most recent limit+1 records.
+      expect(limiter.entries('a')).toBe(4)
+      expect(limiter.size()).toBe(1)
+    })
+
+    it('rejects the very first failure when limit is zero', () => {
+      const limiter = createRateLimiter({ limit: 0, windowMs: 60_000 })
+      expect(limiter.recordFailure('a', 0)).toBe(false)
+    })
+
     it('rejects a non-positive windowMs or a negative or non-integer limit', () => {
       expect(() => createRateLimiter({ limit: 5, windowMs: 0 })).toThrow(/windowMs/)
       expect(() => createRateLimiter({ limit: 5, windowMs: -1_000 })).toThrow(/windowMs/)
@@ -85,6 +101,12 @@ describe('login rate limiter', () => {
       const limiter = createRateLimiter({ limit: 5, windowMs: 60_000 })
       const req = request('::1', ' 203.0.113.9 ,  ,  198.51.100.7  ')
       expect(limiter.clientIp(req, req.socket.remoteAddress)).toBe('198.51.100.7')
+    })
+
+    it('treats an all-empty XFF header as absent and falls back to the socket address', () => {
+      const limiter = createRateLimiter({ limit: 5, windowMs: 60_000 })
+      const req = request('::1', ' ,  ,  ')
+      expect(limiter.clientIp(req, req.socket.remoteAddress)).toBe('::1')
     })
 
     it('joins duplicate XFF header lines before picking the rightmost entry', () => {

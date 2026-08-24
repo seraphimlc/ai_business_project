@@ -1,15 +1,19 @@
 /**
  * Login rate limiter for the user-auth gate: a per-source sliding window over
  * failed login attempts, plus the X-Forwarded-For trust chain. `recordFailure`
- * keeps the `limit` most recent failures per key — the (limit+1)-th failure
- * inside the window is rejected and every call lazily sweeps expired records,
- * so the in-memory table stays bounded without a timer. `clientIp` resolves
- * the source address only through the trusted chain: a loopback peer (nginx
- * in front of the harness) has its X-Forwarded-For header honored — rightmost
- * entry, the `$remote_addr` nginx appended — while any other peer's XFF is
- * ignored as forgeable and the socket address is used directly. An unknown
- * socket address yields undefined and the caller decides how to treat it.
- * Failures are keyed by that resolved source address.
+ * appends every failed attempt — rejected ones too, so pressure persists for
+ * the whole window — counts the attempts still inside the window, and rejects
+ * the (limit+1)-th. Every call lazily sweeps expired records and each key's
+ * history is truncated to its `limit+1` most recent attempts, so the in-memory
+ * table stays bounded without a timer. `clientIp` resolves the source address
+ * only through the trusted chain: a loopback peer (nginx in front of the
+ * harness) has its X-Forwarded-For header honored — rightmost entry, the
+ * `$remote_addr` nginx appended — while any other peer's XFF is ignored as
+ * forgeable and the socket address is used directly. An unknown socket address
+ * yields undefined and the caller decides how to treat it. Failures are keyed
+ * by that resolved source address, so users behind one NAT exit share one
+ * budget: a crowded NAT over-counts and can throttle legitimate users, which
+ * the configurable limit/windowMs let an operator tune.
  */
 
 import type { IncomingMessage } from 'node:http'
@@ -17,10 +21,12 @@ import type { IncomingMessage } from 'node:http'
 /** A sliding-window failure counter and source-address resolver. */
 export interface RateLimiter {
   /**
-   * Record one failed attempt for `key` at `now` (epoch ms). Always records;
+   * Record one failed attempt for `key` at `now` (epoch ms). Always records,
+   * including rejected attempts (pressure persists for the whole window);
    * returns true to allow the attempt (live failures in the window ≤ limit) or
    * false to reject it (live failures > limit, so the (limit+1)-th fails).
-   * Expired records are pruned as a side effect, bounding memory.
+   * Expired records are pruned and each key's history truncated to `limit+1`
+   * entries as a side effect, so storage is bounded by keys × (limit+1).
    */
   recordFailure(key: string, now: number): boolean
   /**
@@ -33,6 +39,11 @@ export interface RateLimiter {
   clientIp(req: IncomingMessage, socketRemote: string | undefined): string | undefined
   /** Number of keys currently holding at least one live failure record. */
   size(): number
+  /**
+   * Number of failure records currently stored for `key` (at most `limit+1`).
+   * An observability hook for the storage bound, like `size()`.
+   */
+  entries(key: string): number
 }
 
 /**
@@ -67,6 +78,10 @@ export function createRateLimiter(opts: { limit: number; windowMs: number }): Ra
       prune(now)
       const live = failures.get(key) ?? []
       live.push(now)
+      // Any attempt older than the most recent limit+1 can never decide a
+      // verdict: it is live only when those newer ones are live too, which
+      // already pushes the count past limit. Truncate to bound per-key storage.
+      if (live.length > limit + 1) live.splice(0, live.length - limit - 1)
       failures.set(key, live)
       return live.length <= limit
     },
@@ -77,6 +92,9 @@ export function createRateLimiter(opts: { limit: number; windowMs: number }): Ra
     },
     size() {
       return failures.size
+    },
+    entries(key) {
+      return failures.get(key)?.length ?? 0
     },
   }
 }
