@@ -3,9 +3,9 @@
  * replaces `users.json` (a `{ version: 1, users: [...] }` document) with
  * fail-closed validation. Every `load()` re-reads the file so a long-running
  * CLI observes external edits; every `write()` commits through
- * `writeFileAtomic` (temp sibling + atomic rename, mode 0600). Symbolic links
- * are refused on open and on load so the store never reads through to an
- * attacker-chosen target.
+ * `writeFileAtomic` (temp sibling + atomic rename, mode 0600, parent dirs
+ * 0700). Symbolic links are refused on open and on load so the store never
+ * reads through to an attacker-chosen target.
  */
 
 import { lstatSync, readFileSync, type Stats } from 'node:fs'
@@ -45,7 +45,7 @@ export interface UsersStore {
   readonly exists: boolean
   /** Re-read the current user list from disk; `[]` when the file is missing. */
   load(): StoredUser[]
-  /** Atomically replace the whole file (writeFileAtomic, mode 0600). */
+  /** Atomically replace the whole file (writeFileAtomic, mode 0600, parent dirs 0700). */
   write(file: UsersFile): Promise<void>
 }
 
@@ -61,7 +61,7 @@ export function openUsersStore(usersPath: string): UsersStore {
   return {
     exists,
     load: () => loadUsers(usersPath),
-    write: file => writeFileAtomic(usersPath, JSON.stringify(file, null, 2) + '\n', { mode: 0o600 }),
+    write: file => writeFileAtomic(usersPath, JSON.stringify(file, null, 2) + '\n', { mode: 0o600, dirMode: 0o700 }),
   }
 }
 

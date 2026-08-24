@@ -1,8 +1,8 @@
 /**
  * users store persistence contract: valid documents load, a missing file
  * reads as an empty store, malformed JSON and invalid structure fail closed,
- * symbolic links are refused, and writes land atomically (mode 0600) and are
- * re-read by the next load().
+ * symbolic links are refused, and writes land atomically (mode 0600, parent
+ * dirs 0700) and are re-read by the next load().
  */
 
 import { lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -135,13 +135,17 @@ describe('users store', () => {
     expect(() => store.load()).toThrow(/symbolic link/)
   })
 
-  it('writes the file with mode 0600 and re-reads it on the next load()', async () => {
-    const path = join(scratch(), 'users.json')
+  it('writes the file with mode 0600, creates parent dirs with mode 0700, and re-reads on the next load()', async () => {
+    const dir = scratch()
+    const path = join(dir, 'nested', 'users.json')
     const store = openUsersStore(path)
     expect(store.exists).toBe(false)
     await store.write(validFile)
     expect(readFileSync(path, 'utf8')).toBe(JSON.stringify(validFile, null, 2) + '\n')
-    if (process.platform !== 'win32') expect(lstatSync(path).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(lstatSync(path).mode & 0o777).toBe(0o600)
+      expect(lstatSync(join(dir, 'nested')).mode & 0o777).toBe(0o700)
+    }
     expect(store.load()).toEqual([alice, bob])
     // exists is a creation-time snapshot and does not flip after a write.
     expect(store.exists).toBe(false)
