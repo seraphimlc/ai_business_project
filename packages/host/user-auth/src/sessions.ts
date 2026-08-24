@@ -56,6 +56,7 @@ export interface SessionStore {
  * so the store stays a pure, testable file adapter over the persisted
  * document; the caller decides where `auth-sessions.json` lives.
  * @param sessionsPath - path of the sessions document.
+ * @returns a `SessionStore` persisting sessions under `sessionsPath`.
  */
 export function openSessionStore(sessionsPath: string): SessionStore {
   return {

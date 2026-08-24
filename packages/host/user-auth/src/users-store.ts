@@ -54,6 +54,7 @@ export interface UsersStore {
  * exists. A symbolic link at the path is refused outright.
  * @param usersPath - path of the `users.json` document.
  * @throws when `usersPath` exists as a symbolic link.
+ * @returns a `UsersStore` rooted at `usersPath`.
  */
 export function openUsersStore(usersPath: string): UsersStore {
   const exists = probePath(usersPath)

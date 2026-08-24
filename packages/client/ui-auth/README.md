@@ -10,7 +10,7 @@ The form reads `GET /api/auth/status` for `{ configured }`; a deployment without
 
 The `LoginPage` overlay entry owns the username and password fields, the submit button, the error line, and the no-account hint. The `login` locale namespace carries the copy (en/zh pairs in `src/client/locales.ts`).
 
-## Known limitations and deferred work
+## Known Limitations and Deferred Work
 
 - **Not a routing system** — `/login` is the login form's carrier, not a route; the SPA keeps no router, and the overlay mounts by pathname alone.
 - **Fail-open deployments never see it** — when the gate runs without trusted hosts (loopback development), unauthenticated requests are allowed and the SPA loads directly, so the login page never renders.

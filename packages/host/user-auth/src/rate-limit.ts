@@ -52,6 +52,7 @@ export interface RateLimiter {
  * @param opts.limit - maximum allowed failures inside the window (≥ 0; the
  *   (limit+1)-th failure inside the window is rejected).
  * @param opts.windowMs - sliding window length in milliseconds (> 0).
+ * @returns a new `RateLimiter` tracking failure records per key.
  */
 export function createRateLimiter(opts: { limit: number; windowMs: number }): RateLimiter {
   const { limit, windowMs } = opts
