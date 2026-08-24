@@ -6,10 +6,10 @@
  * unit tests feed stdin and capture stdout/stderr without a pseudo-terminal.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Readable, Writable } from 'node:stream'
+import { PassThrough, Readable, Writable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseDshArgs } from '../src/args.ts'
 import { runUser } from '../src/user.ts'
@@ -55,9 +55,20 @@ async function user(args: readonly string[], input?: string): Promise<UserResult
   const stderr = collector()
   const io = input === undefined
     ? { stdout: stdout.stream, stderr: stderr.stream }
-    : { stdin: Readable.from([input]), stdout: stdout.stream, stderr: stderr.stream }
+    // A missing trailing newline would leave the readline promise pending; a
+    // line-terminated password is what a real terminal always produces.
+    : { stdin: Readable.from([input.endsWith('\n') ? input : `${input}\n`]), stdout: stdout.stream, stderr: stderr.stream }
   const code = await runUser(args, io)
   return { code, stdout: stdout.text(), stderr: stderr.text() }
+}
+
+/** Poll until `predicate` holds, failing the test on timeout instead of hanging. */
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('timed out waiting for condition')
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
 }
 
 /** The registered users on disk, or `[]` when `users.json` does not exist yet. */
@@ -216,6 +227,79 @@ describe('dsh user errors and help', () => {
     expect(stdout.text()).toContain('set-password')
     expect(stdout.text()).toContain('list')
     expect(stdout.text()).toContain('remove')
+  })
+
+  it('rejects --display-name for actions other than add', async () => {
+    const result = await user(['list', '--display-name', 'X'])
+
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('--display-name')
+  })
+
+  it.each(['add', 'set-password', 'remove'])('requires a username for %s', async (action) => {
+    const result = await user([action])
+
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('needs a username')
+  })
+
+  it('rejects an invocation with no action', async () => {
+    const result = await user([])
+
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('missing required argument')
+  })
+
+  it('fails closed on a corrupt users.json', async () => {
+    writeFileSync(join(process.env.DSH_HOME!, 'users.json'), '{ not json')
+
+    const listed = await user(['list'])
+    expect(listed.code).toBe(1)
+    expect(listed.stderr).toContain('invalid JSON')
+
+    const added = await user(['add', 'alice'], 'secret\n')
+    expect(added.code).toBe(1)
+    expect(added.stderr).toContain('invalid JSON')
+    // The corrupt document is left untouched, never overwritten.
+    expect(usersFileContent()).toBe('{ not json')
+  })
+})
+
+describe('dsh user password prompt lifecycle', () => {
+  it('fails cleanly when stdin ends before a password line (EOF)', async () => {
+    const stdout = collector()
+    const stderr = collector()
+    const code = await runUser(['add', 'alice'], {
+      stdin: Readable.from([]),
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+    })
+
+    expect(code).toBe(1)
+    expect(stderr.text()).toContain('password prompt ended')
+    expect(storedUsers()).toEqual([])
+  })
+
+  it('aborts with the conventional 130 exit code on ^C at the password prompt', async () => {
+    // A TTY-like injected stdin lets readline run its terminal keypress
+    // parser so the ^C keypress reaches the interface's SIGINT handler.
+    const input = new PassThrough()
+    ;(input as unknown as { isTTY: boolean }).isTTY = true
+    ;(input as unknown as { setRawMode(mode: boolean): unknown }).setRawMode = () => input
+    const stdout = collector()
+    const stderr = collector()
+    const pending = runUser(['add', 'alice', '--display-name', 'Alice'], {
+      stdin: input,
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+    })
+
+    await waitFor(() => stdout.text().includes('Password: '))
+    input.emit('keypress', null, { ctrl: true, name: 'c' })
+
+    const code = await pending
+    expect(code).toBe(130)
+    expect(storedUsers()).toEqual([])
   })
 })
 

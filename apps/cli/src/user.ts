@@ -11,12 +11,13 @@
  * @module @deepseek-ai/dsh/user
  */
 
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { Readable, Writable } from 'node:stream'
 import { Command, CommanderError } from 'commander'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import { hashPassword, openUsersStore } from '@deepseek-ai/dsh-user-auth'
+import { hashPassword, isValidUsername, openUsersStore } from '@deepseek-ai/dsh-user-auth'
 
 /** Streams a `dsh user` invocation may be given; each defaults to the process's own. */
 export interface UserIo {
@@ -29,11 +30,11 @@ export interface UserIo {
 /** A user-facing failure: printed to stderr and reported as exit code 1. */
 class UserCliError extends Error {}
 
+/** ^C at a password prompt; reported as exit code 130, the conventional SIGINT status. */
+class PasswordPromptInterrupted extends Error {}
+
 /** The users document lives next to the gate's, under the resolved harness home. */
 const USERS_FILE = 'users.json'
-
-/** Username rule mirrored from the users store: non-empty, no whitespace or path separators. */
-const USERNAME_FORBIDDEN = /[\s/\\]/
 
 /** The account-management actions this command implements. */
 const ACTIONS: ReadonlySet<string> = new Set(['add', 'set-password', 'list', 'remove'])
@@ -44,6 +45,33 @@ const ACTIONS: ReadonlySet<string> = new Set(['add', 'set-password', 'list', 're
  */
 function usersPath(): string {
   return join(resolveDshHome(), USERS_FILE)
+}
+
+/**
+ * The format version carried by the users document, read from the raw file so
+ * a future format bump survives a rewrite instead of being reset to 1. The
+ * store already validated the version on load (only 1 is accepted today); a
+ * missing or unreadable file means a fresh version-1 document.
+ * @returns the version number to preserve on the next write.
+ */
+function usersVersion(): number {
+  try {
+    const parsed = JSON.parse(readFileSync(usersPath(), 'utf8')) as { version?: unknown }
+    return typeof parsed.version === 'number' ? parsed.version : 1
+  } catch {
+    return 1
+  }
+}
+
+/**
+ * Whether a stream runs the terminal readline path (raw mode, hidden echo):
+ * the real stdin on a TTY, or an injected stream that claims a TTY so the
+ * keypress parser (and the ^C SIGINT event) is live in tests.
+ * @param stream - the password input stream.
+ * @returns whether the interface should treat it as a terminal.
+ */
+function isTtyStream(stream: Readable): boolean {
+  return (stream as Readable & { isTTY?: boolean }).isTTY ?? false
 }
 
 /**
@@ -66,7 +94,7 @@ async function readPassword(io: UserIo, prompt: string): Promise<string> {
       'reading a password requires an interactive terminal — a password is never read from a pipe or CI log',
     )
   }
-  const terminal = stdin === process.stdin
+  const terminal = isTtyStream(stdin)
   stdout.write(prompt)
   return await new Promise<string>((resolve, reject) => {
     const rl = createInterface({ input: stdin, output: stdout, terminal })
@@ -81,18 +109,49 @@ async function readPassword(io: UserIo, prompt: string): Promise<string> {
       }
       rl.on('line', (line) => {
         muted = false
-        rl.close()
         stdout.write('\n')
         resolve(line)
+        rl.close()
       })
     } else {
       rl.on('line', (line) => {
-        rl.close()
         resolve(line)
+        rl.close()
       })
     }
-    rl.on('error', reject)
+    // In raw mode ^C never raises the SIGINT process signal; readline turns
+    // it into an interface event. Abort with the conventional 130. rl.close()
+    // restores the terminal (it flips raw mode back off).
+    rl.on('SIGINT', () => {
+      stdout.write('\n')
+      reject(new PasswordPromptInterrupted())
+      rl.close()
+    })
+    // EOF (Ctrl+D on a TTY, or a closed pipe) without a line must fail
+    // instead of leaving the prompt pending forever. Settling handlers
+    // resolve/reject before rl.close(), so this late reject is a no-op.
+    rl.on('close', () => {
+      reject(new UserCliError('password prompt ended before a password was entered'))
+    })
+    rl.on('error', (error: Error) => {
+      reject(error)
+      rl.close()
+    })
   })
+}
+
+/**
+ * Prompt for a password, refuse an empty one, and hash it.
+ * @param io - streams for prompting.
+ * @param prompt - the prompt text written before reading.
+ * @returns the scrypt hash of the entered password.
+ */
+async function readNewPassword(io: UserIo, prompt: string): Promise<string> {
+  const password = await readPassword(io, prompt)
+  if (password.length === 0) {
+    throw new UserCliError('password must not be empty')
+  }
+  return await hashPassword(password)
 }
 
 /**
@@ -109,12 +168,8 @@ async function runAdd(io: UserIo, username: string, displayName: string): Promis
   if (users.some(user => user.username === username)) {
     throw new UserCliError(`user ${username} already exists`)
   }
-  const password = await readPassword(io, 'Password: ')
-  if (password.length === 0) {
-    throw new UserCliError('password must not be empty')
-  }
-  const passwordHash = await hashPassword(password)
-  await store.write({ version: 1, users: [...users, { username, passwordHash, displayName }] })
+  const passwordHash = await readNewPassword(io, 'Password: ')
+  await store.write({ version: usersVersion(), users: [...users, { username, passwordHash, displayName }] })
   stdout.write(`user ${username} added\n`)
 }
 
@@ -130,13 +185,9 @@ async function runSetPassword(io: UserIo, username: string): Promise<void> {
   if (!users.some(user => user.username === username)) {
     throw new UserCliError(`user ${username} not found`)
   }
-  const password = await readPassword(io, 'New password: ')
-  if (password.length === 0) {
-    throw new UserCliError('password must not be empty')
-  }
-  const passwordHash = await hashPassword(password)
+  const passwordHash = await readNewPassword(io, 'New password: ')
   const updated = users.map(user => user.username === username ? { ...user, passwordHash } : user)
-  await store.write({ version: 1, users: updated })
+  await store.write({ version: usersVersion(), users: updated })
   stdout.write(`password updated for ${username}\n`)
 }
 
@@ -163,7 +214,7 @@ async function runRemove(io: UserIo, username: string): Promise<void> {
   if (!users.some(user => user.username === username)) {
     throw new UserCliError(`user ${username} not found`)
   }
-  await store.write({ version: 1, users: users.filter(user => user.username !== username) })
+  await store.write({ version: usersVersion(), users: users.filter(user => user.username !== username) })
   stdout.write(`user ${username} removed\n`)
 }
 
@@ -191,11 +242,14 @@ export async function runUser(args: readonly string[], io: UserIo = {}): Promise
       if (!ACTIONS.has(action)) {
         throw new UserCliError(`unknown action ${JSON.stringify(action)} (expected add, set-password, list, or remove)`)
       }
+      if (action !== 'add' && options.displayName !== undefined) {
+        throw new UserCliError(`--display-name applies only to add, not to ${action}`)
+      }
       try {
         switch (action) {
           case 'add': {
             if (username === undefined) throw new UserCliError('add needs a username')
-            if (username.length === 0 || USERNAME_FORBIDDEN.test(username)) {
+            if (!isValidUsername(username)) {
               throw new UserCliError('username must be non-empty and contain no whitespace or path separators')
             }
             const displayName = options.displayName ?? username
@@ -219,9 +273,10 @@ export async function runUser(args: readonly string[], io: UserIo = {}): Promise
         }
       } catch (error) {
         // Surface the users store's own diagnostics (corrupt document, symlink
-        // refusal, I/O errors) as user-facing failures instead of stack traces.
-        if (error instanceof UserCliError) throw error
-        throw new UserCliError(error instanceof Error ? error.message : String(error))
+        // refusal, I/O errors) as user-facing failures instead of stack traces,
+        // keeping the original error as the cause for diagnostics.
+        if (error instanceof UserCliError || error instanceof PasswordPromptInterrupted) throw error
+        throw new UserCliError(error instanceof Error ? error.message : String(error), { cause: error })
       }
     })
   try {
@@ -229,6 +284,7 @@ export async function runUser(args: readonly string[], io: UserIo = {}): Promise
     return 0
   } catch (error) {
     if (error instanceof CommanderError) return error.exitCode
+    if (error instanceof PasswordPromptInterrupted) return 130
     if (error instanceof UserCliError) {
       stderr.write(`dsh user: ${error.message}\n`)
       return 1

@@ -20,8 +20,23 @@ export interface StoredUser {
 
 /** On-disk shape of `users.json`; `version` gates future migrations. */
 export interface UsersFile {
-  version: 1
+  version: number
   users: StoredUser[]
+}
+
+/** Characters a username must not contain: whitespace or path separators. */
+export const USERNAME_FORBIDDEN = /[\s/\\]/
+
+/**
+ * Whether a username is acceptable for the registry: non-empty and free of
+ * whitespace and path separators. The CLI enforces this on write (the store
+ * itself does not validate before persisting); `load()` re-checks it so a
+ * hand-edited document fails closed.
+ * @param username - the candidate account name.
+ * @returns whether the name may be stored.
+ */
+export function isValidUsername(username: string): boolean {
+  return username.length > 0 && !USERNAME_FORBIDDEN.test(username)
 }
 
 /** A users store rooted at one `users.json` path. */
@@ -123,7 +138,7 @@ function parseUser(entry: unknown, index: number, usersPath: string): StoredUser
   if (typeof username !== 'string' || username.length === 0) {
     throw new Error(`users-store: ${usersPath} users[${index}].username must be a non-empty string`)
   }
-  if (/[\s/\\]/.test(username)) {
+  if (USERNAME_FORBIDDEN.test(username)) {
     throw new Error(`users-store: ${usersPath} users[${index}].username must not contain whitespace or path separators`)
   }
   if (typeof passwordHash !== 'string' || passwordHash.length === 0) {
