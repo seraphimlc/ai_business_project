@@ -440,7 +440,11 @@ describe('logout row + session-expiry guards', () => {
     const location = stubLocation({ pathname: '/', href: 'http://localhost/' })
     const reload = vi.fn()
     location.reload = reload
-    render(createElement(LogoutButton, { t: makeTranslate(zh) }))
+    render(createElement(LogoutButton, {
+      t: makeTranslate(zh),
+      useSessions: () => { throw new Error('unused') },
+      useWorkspaces: () => { throw new Error('unused') },
+    }))
     fireEvent.click(screen.getByRole('button', { name: '登出' }))
     await waitFor(() => { expect(reload).toHaveBeenCalledTimes(1) })
 
@@ -501,7 +505,11 @@ describe('logout row + session-expiry guards', () => {
     const location = stubLocation({ pathname: '/', href: 'http://localhost/' })
     const reload = vi.fn()
     location.reload = reload
-    render(createElement(LogoutButton, { t: makeTranslate(zh) }))
+    render(createElement(LogoutButton, {
+      t: makeTranslate(zh),
+      useSessions: () => { throw new Error('unused') },
+      useWorkspaces: () => { throw new Error('unused') },
+    }))
     fireEvent.click(screen.getByRole('button', { name: '登出' }))
     const unhandled = await captureUnhandledRejections(async () => {
       // The reload is unconditional: even a failed logout re-derives the
