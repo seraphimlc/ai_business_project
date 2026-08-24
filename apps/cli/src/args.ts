@@ -11,7 +11,8 @@
  * and `dsh --profile web -h` prints the web app's help, not this one's.
  *
  * `web` is a hardcoded alias for `--profile web`; `plugin` manages a profile's
- * plugin dependencies by forwarding to pnpm.
+ * plugin dependencies by forwarding to pnpm; `user` routes local account
+ * management to its own parser (which owns `-h` and the action grammar).
  * @module @deepseek-ai/dsh/args
  */
 
@@ -44,8 +45,15 @@ interface PluginInvocation {
   args: string[]
 }
 
+/** Manage local accounts: the raw arguments go to the user command's own parser. */
+interface UserInvocation {
+  mode: 'user'
+  /** Raw user-management arguments, verbatim. */
+  args: string[]
+}
+
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
-export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
+export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation | UserInvocation
 
 /** Launcher flags shared by the default command and the `web` alias. */
 interface BootOptions {
@@ -69,6 +77,7 @@ Examples:
   dsh --profile tui --resume <session>       arguments after the launcher flags reach the app
   dsh --profile web --help                   the web app's own flags and help
   dsh plugin --profile tui add <package>     install a plugin into the tui profile
+  dsh user add alice --display-name Alice    create the local account the web gate signs in
 `
 
 /**
@@ -178,6 +187,18 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
       if (options.profile === '') program.error('error: --profile needs a name')
       if (args.length === 0) program.error('error: plugin needs pnpm arguments to forward (e.g. add <package>)')
       resolved = { mode: 'plugin', profile: options.profile, args }
+    })
+
+  // The user command owns its own parser and help (its -h passes through to
+  // it, like the app-owned flags of a boot); the launcher only routes.
+  const user = program.command('user').description('manage local accounts (add, set-password, list, remove)')
+  user
+    .helpOption(false)
+    .allowUnknownOption()
+    .argument('[args...]', 'user-management arguments, parsed by the user command (add <name>, set-password <name>, list, remove <name>)')
+    .action((args: string[]) => {
+      rejectParentOptions('user')
+      resolved = { mode: 'user', args }
     })
 
   try {

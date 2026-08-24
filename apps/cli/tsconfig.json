@@ -42,6 +42,9 @@
       "path": "../../packages/host/frontend-static"
     },
     {
+      "path": "../../packages/host/user-auth"
+    },
+    {
       "path": "../../packages/core/session"
     },
     {

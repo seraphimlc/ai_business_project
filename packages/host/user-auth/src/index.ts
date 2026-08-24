@@ -20,6 +20,7 @@ import { createRateLimiter } from './rate-limit.ts'
 import { INSECURE_SESSION_COOKIE_NAME, SECURE_SESSION_COOKIE_NAME, sessionCookieValue } from './cookie.ts'
 
 export { hashPassword, verifyPassword } from './hash.ts'
+export { openUsersStore, type StoredUser, type UsersFile } from './users-store.ts'
 
 declare module 'node:http' {
   interface IncomingMessage {

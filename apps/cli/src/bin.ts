@@ -42,6 +42,13 @@ switch (invocation.mode) {
     process.exit(runPlugin(invocation.profile, invocation.args))
     break
   }
+  case 'user': {
+    const { runUser } = await import('./user.ts')
+    // exitCode (not process.exit): runUser writes through async streams, and
+    // an immediate exit could truncate the success message.
+    process.exitCode = await runUser(invocation.args)
+    break
+  }
   case 'dump-config': {
     const { runDumpConfig } = await import('./dump-config.ts')
     runDumpConfig(invocation.profile, invocation.defaultOnly, invocation.patches)
