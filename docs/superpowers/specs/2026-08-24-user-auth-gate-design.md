@@ -101,7 +101,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 3. **调用点**：`handle()` 在路由匹配**前**调用一次；upgrade 事件处理器在 upgrade 路由分派**前**调用一次。
 4. **安装时机**：必须在监听（`[Service.init]` 的 `listen`）之前安装——激活顺序保证首个请求即被拦截，配套一条启动顺序集成测试。
 5. **身份附加**：钩子返回 `'allow'` 前由 `user-auth` 插件自身负责把 `req.user = { username, displayName }` 附加到 `IncomingMessage`（WebServer 是通用组件、无法提供身份，此职责必须落在认证插件；TypeScript 通过模块扩展声明该字段）。
-6. **WS 拒绝映射**：`AuthDecision` 的 `status` 只作用于 HTTP 响应；对 upgrade 请求，任何 deny 决策统一走 `rejectWebSocketUpgrade(socket)`（写 403 后 close）。复用 `packages/client/connection/src/websocket-downlink.ts:144`——与 connection 插件现有 untrusted 拒绝行为一致。
+6. **WS 拒绝映射**：`AuthDecision` 的 `status` 只作用于 HTTP 响应；对 upgrade 请求，任何 deny 决策统一写 HTTP 403 后 close。**实现偏差**：为避免 host→client 反向依赖（connection 依赖 webserver），webserver 内联与 `packages/client/connection/src/websocket-downlink.ts:144` 逐字节相同的 403 响应（行为等价，不 import 该 client 函数）。
 
 钩子由 `user-auth` 插件在 init 时注入。`user-auth` 同时注册 `exact` 路由 `/api/auth/login`、`/api/auth/logout`。
 
@@ -129,7 +129,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 - 登出入口：放入 `ui-settings` 的通用设置页（调用 `/api/auth/logout` 后刷新）。
 - 无账号时：已配置 `--trusted-host` 时 web 不启动（见第一节 fail-closed）；未配置时（本地开发）登录页提示"未配置账号，运行 `dsh user add`"，不显示表单或表单禁用。
 
-UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 注册 + `dsh.client` 声明），浏览器半 `src/client/`（登录页 + 登出入口 + 路由注册到现有路由表）。
+UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 注册 + `dsh.client` 声明），浏览器半 `src/client/`（登录页 + 登出入口）。**仓库 SPA 无路由表**：`/login` 通过浏览器半读取 `location.pathname` 并注册进 `shell.overlay` slot 挂载（见实现计划 Chunk 4）。
 
 ## 第三节：WebSocket 认证细节
 

@@ -557,8 +557,8 @@ pnpm exec vitest run packages/host/user-auth/tests/hash.spec.ts
 - [ ] **Step 3: 实现**
   - `LogoutButton.tsx`：`POST /api/auth/logout`（credentials include）→ `location.reload()`。
   - 注册进 `ui-settings` 的 General 设置区：通过 `packages/client/ui-settings/src/client/contract/slots.ts:88` 的 **`settings.general.item`** slot 注册一行"登出"（该 slot 是 General 页的加法席位，`ui-settings-general` 的 General section 渲染它）。
-  - **API 401 拦截（机制固定为 fetch 包装）**：`WebApiClient.doFetch` 在调用时经 `globalThis.fetch`（`packages/client/connection/src/web-api-client.ts:18-20`），`ui-auth` 浏览器半包装 `globalThis.fetch`（或包装 connection 的 fetch 路径）：收到 401/403 且路径非 `/api/auth/login`、非 `/api/auth/logout` → `location.href = '/login?next=' + encodeURIComponent(location.pathname)`。
-  - **WS 过期信号与提示**：WS upgrade 被宿主拒绝（403）表现为浏览器侧 `WebSocket` error/close（stream 结束）。`ui-auth` 监听 connection 的 WS 关闭/错误事件：当会话过期导致 WS 断开时，跳转 `/login?next=<当前路径>` 并提示"登录已过期，请重新登录"（规格第四节要求）。
+  - **API 401 拦截（机制固定为 fetch 包装）**：`WebApiClient.doFetch` 在调用时经 `globalThis.fetch`（`packages/client/connection/src/client/web-api-client.ts:14-16`），`ui-auth` 浏览器半包装 `globalThis.fetch`：收到 401/403 且路径非 `/api/auth/login`、非 `/api/auth/logout` → `location.href = '/login?next=' + encodeURIComponent(location.pathname)`。
+  - **WS 过期信号与提示（机制固定为 WebSocket 构造器包装）**：`packages/client/connection/src` 没有可订阅的 WS 事件面（`readWebSocket` 只把 close 映射为 stream end `{kind:'end'}`，现有可观测面 `hostDescription.subscribe` 无法区分会话过期 403 与网络/重启断开）。因此 `ui-auth` 浏览器半在 apply 时**包装页面全局 `WebSocket` 构造器**（与 fetch 包装并列），只拦截指向 `/api/events.mux` 与 `/api/events.host` 的连接：监听 error/close（未收到 open 即断开）→ 跳转 `/login?next=<当前路径>` 并提示"登录已过期，请重新登录"（规格第四节要求）。
 
 - [ ] **Step 4: 运行确认通过**
 
