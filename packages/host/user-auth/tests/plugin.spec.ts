@@ -167,6 +167,22 @@ describe('user-auth gate composition', () => {
     expect(JSON.parse(bad.body)).toEqual({ error: 'invalid credentials' })
   })
 
+  it('answers an unknown username like a wrong password (anti-enumeration)', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition({ trustedHosts: ['dsh.visitworld.me'] }, seedUser)
+    const port = loaded.webServer.port
+
+    // Unknown usernames and wrong passwords share the uniform 401 body…
+    const unknown = await login(port, JSON.stringify({ username: 'mallory', password: PASSWORD }))
+    expect(unknown.status).toBe(401)
+    expect(JSON.parse(unknown.body)).toEqual({ error: 'invalid credentials' })
+
+    // …and both burn a full scrypt verification: the dummy hash is a real,
+    // well-formed $scrypt$ string (so verifyPassword cannot short-circuit on
+    // the parse), keeping the response-time workload indistinguishable.
+    expect(UserAuth.DUMMY_PASSWORD_HASH).toMatch(/^\$scrypt\$[0-9a-f]{32}\$[0-9a-f]{128}$/)
+    await expect(UserAuth.verifyPassword('x', UserAuth.DUMMY_PASSWORD_HASH)).resolves.toBeTypeOf('boolean')
+  })
+
   it('emits the bare dsh_session cookie when secureCookie is false', { timeout: 60_000 }, async () => {
     const loaded = await loadComposition({ trustedHosts: ['dsh.visitworld.me'], secureCookie: false }, seedUser)
     const ok = await login(loaded.webServer.port, JSON.stringify({ username: USERNAME, password: PASSWORD }))
@@ -302,6 +318,14 @@ describe('user-auth gate composition', () => {
     const logout = await request(port, '/api/auth/logout', { method: 'POST', headers: { cookie } })
     expect(logout.status).toBe(200)
     expect((await request(port, '/probe', { headers: { cookie } })).status).toBe(401)
+
+    // Logout is POST-only, symmetric with login's 405 guard.
+    expect((await request(port, '/api/auth/logout')).status).toBe(405)
+  })
+
+  it('fails closed on a non-positive sessionTtlHours', { timeout: 60_000 }, async () => {
+    await expect(loadComposition({ trustedHosts: ['dsh.visitworld.me'], sessionTtlHours: 0 }, seedUser))
+      .rejects.toThrow(/sessionTtlHours/)
   })
 
   it('fails closed: trustedHosts configured without any account refuse to boot', { timeout: 60_000 }, async () => {

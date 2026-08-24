@@ -68,6 +68,17 @@ const PUBLIC_PATHS: ReadonlySet<string> = new Set([
 /** Public static prefixes: plugin assets and bundled frontend assets. */
 const PUBLIC_PATH_PREFIXES: readonly string[] = ['/plugins/', '/assets/']
 
+/**
+ * Fixed `$scrypt$` hash (16-byte random salt, 64-byte key, N=16384/r=8/p=1)
+ * whose password is random and known to nobody. The login handler verifies
+ * against it when a submitted username does not exist, so an unknown-username
+ * attempt burns the same scrypt work as a wrong password on an existing
+ * account — the response-time difference that would otherwise reveal which
+ * usernames exist (the design's "no user-enumeration" guarantee). Exported
+ * for the structural anti-enumeration test.
+ */
+export const DUMMY_PASSWORD_HASH = '$scrypt$a0e26ab45f3c4854914d5265b5bc6420$58a0c3dc264149745716f7cfda44a57a743366895330ffa023690c5ff42ea231d31db19883bc4588d3823e8708702f11cda1cf041d5858c71ba9df6e6bb20c72'
+
 /** Whether `value` is a usable `{ username, password }` login payload. */
 function isCredentials(value: unknown): value is { username: string; password: string } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
@@ -126,6 +137,11 @@ export function apply(ctx: Context, config: UserAuthConfig): void {
   const trustedHosts = config.trustedHosts ?? []
   const secureCookie = config.secureCookie ?? true
   const sessionTtlHours = config.sessionTtlHours ?? DEFAULT_SESSION_TTL_HOURS
+  // Fail-closed config sanity: a non-positive TTL would mint instantly-expired
+  // sessions, so reject it at boot like the sibling stores reject bad TTLs.
+  if (!Number.isFinite(sessionTtlHours) || sessionTtlHours <= 0) {
+    throw new Error(`user-auth: sessionTtlHours must be a positive finite number, got ${String(sessionTtlHours)}`)
+  }
   const users = openUsersStore(dshHomePath(USERS_FILE))
   const sessions = openSessionStore(dshHomePath(SESSIONS_FILE))
   const limiter = createRateLimiter({ limit: LOGIN_RATE_LIMIT, windowMs: LOGIN_RATE_WINDOW_MS })
@@ -193,7 +209,13 @@ export function apply(ctx: Context, config: UserAuthConfig): void {
         return
       }
       const user = users.load().find(entry => entry.username === parsed.username)
-      if (user === undefined || !(await verifyPassword(parsed.password, user.passwordHash))) {
+      // Anti-enumeration: an unknown username verifies against a fixed dummy
+      // hash, so it burns the same scrypt work as a wrong password on an
+      // existing account — the response-time difference that would otherwise
+      // reveal which usernames exist. The uniform 401 body and
+      // timingSafeEqual cover the message and comparison leaks.
+      const verified = await verifyPassword(parsed.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH)
+      if (user === undefined || !verified) {
         // The failure is counted first, and the (limit+1)-th inside the window
         // answers 429 instead of 401 while keeping the pressure recorded.
         const key = limiter.clientIp(req, req.socket.remoteAddress) ?? 'unknown'
@@ -211,11 +233,21 @@ export function apply(ctx: Context, config: UserAuthConfig): void {
     }
 
     const logoutHandler: WebRoute['handler'] = async (req, res) => {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json', Allow: 'POST' })
+        res.end(JSON.stringify({ error: 'method not allowed' }))
+        return
+      }
       const token = readSessionToken(req.headers.cookie)
       if (token !== undefined) await sessions.remove(token)
+      // Clear both cookie names: if secureCookie flipped since the session was
+      // issued, the other-named cookie would otherwise survive the logout.
       res.writeHead(200, {
         'Content-Type': 'application/json',
-        'Set-Cookie': sessionCookieValue('', { secure: secureCookie, maxAgeSeconds: 0 }),
+        'Set-Cookie': [
+          sessionCookieValue('', { secure: true, maxAgeSeconds: 0 }),
+          sessionCookieValue('', { secure: false, maxAgeSeconds: 0 }),
+        ],
       })
       res.end(JSON.stringify({ ok: true }))
     }
