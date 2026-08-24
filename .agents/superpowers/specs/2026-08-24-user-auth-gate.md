@@ -4,7 +4,7 @@
 
 **Goal:** 给 DeepSeek Harness 增加应用内登录门禁（预置账号 + 密码 + session cookie），替换公网部署 dsh.visitworld.me 上现有的 nginx basic auth。
 
-**Architecture:** 新增宿主插件 `packages/user-auth/`（账号存储、会话签发、认证钩子）与客户端插件 `packages/client/ui-auth/`（登录页 UI）。对 `packages/host/webserver` 做最小侵入改动：新增可选单席位 `authenticate` 钩子字段与两个调用点（HTTP 分派前、WS upgrade 分派前）。`user-auth` 通过 CLI launcher 子命令（`dsh user ...`）管理账号。公网部署保留 `--trusted-host dsh.visitworld.me`，nginx 去掉 basic auth。
+**Architecture:** 新增宿主插件 `packages/host/user-auth/`（账号存储、会话签发、认证钩子）与客户端插件 `packages/client/ui-auth/`（登录页 UI）。对 `packages/host/webserver` 做最小侵入改动：新增可选单席位 `authenticate` 钩子字段与两个调用点（HTTP 分派前、WS upgrade 分派前）。`user-auth` 通过 CLI launcher 子命令（`dsh user ...`）管理账号。公网部署保留 `--trusted-host dsh.visitworld.me`，nginx 去掉 basic auth。
 
 **Tech Stack:** TypeScript、Node 内置 `crypto`（scrypt/randomBytes/timingSafeEqual）、Cordis 插件体系、Vite/tsdown client 构建、vitest。
 
@@ -135,19 +135,19 @@
 
 **新包注册（本 Chunk 所有 Task 的前置，Task 2.1 Step 0 完成）：**
 
-- Create: `packages/user-auth/package.json` — name `@deepseek-ai/dsh-user-auth`，`type: module`、`main: lib/index.js`、`types: lib/types/index.d.ts`、`exports` 含 `"."` 与 `"./invariant"`、`files` 含 `lib/index.js lib/invariant.js lib/types/**/*.d.ts`；`peerDependencies` + `devDependencies` 含 `@deepseek-ai/cordis`、`@deepseek-ai/dsh-invariants`、`@deepseek-ai/dsh-home-paths`、`@deepseek-ai/dsh-atomic-write`、`@deepseek-ai/dsh-host-webserver`（均 `workspace:^`）。
-- Create: `packages/user-auth/tsconfig.json` — `extends` 仓库 base 并 `references` 依赖（含 `../../util/atomic-write`、`../../util/home-paths`、`../../runtime-diagnostics/invariants`、`../../host/webserver`）。
-- Create: `packages/user-auth/src/invariant.ts` — 仓库 invariant 配套：注册包名 `dsh-user-auth`、named-export `name/inject/apply`、本地 `install` fn（被 `scripts/package-invariants.ts` 门禁强制）。
-- Modify: `tsconfig.host.json` — `references` 追加 `{ "path": "./packages/user-auth" }`（否则 `tsc -b` 不会构建它）。
+- Create: `packages/host/user-auth/package.json` — name `@deepseek-ai/dsh-user-auth`，`type: module`、`main: lib/index.js`、`types: lib/types/index.d.ts`、`exports` 含 `"."` 与 `"./invariant"`、`files` 含 `lib/index.js lib/invariant.js lib/types/**/*.d.ts`；`peerDependencies` + `devDependencies` 含 `@deepseek-ai/cordis`、`@deepseek-ai/dsh-invariants`、`@deepseek-ai/dsh-home-paths`、`@deepseek-ai/dsh-atomic-write`、`@deepseek-ai/dsh-host-webserver`（均 `workspace:^`）。
+- Create: `packages/host/user-auth/tsconfig.json` — `extends` 仓库 base 并 `references` 依赖：`../../runtime-diagnostics/invariants`、`../../util/atomic-write`、`../../util/home-paths`、`../webserver`（host 组内）。
+- Create: `packages/host/user-auth/src/invariant.ts` — 仓库 invariant 配套：注册包名 `dsh-user-auth`、named-export `name/inject/apply`、本地 `install` fn（被 `scripts/package-invariants.ts` 门禁强制）。
+- Modify: `tsconfig.host.json` — `references` 追加 `{ "path": "./packages/host/user-auth" }`（否则 `tsc -b` 不会构建它）。
 - Modify: `packages/bundle/web-app/package.json` — `dependencies` 追加 `"@deepseek-ai/dsh-user-auth": "workspace:^"`（每个组合插件都必须显式声明，否则 roster 无法解析）。
 - Modify: `apps/cli/package.json` — `dependencies` 追加 `"@deepseek-ai/dsh-user-auth": "workspace:^"`（供 `apps/cli/src/user.ts` import）。
-- Create: `packages/user-auth/README.md`、`README.i18n.yaml`、`README.zh.md`（doc-sync 门禁要求三件套）。
+- Create: `packages/host/user-auth/README.md`、`README.i18n.yaml`、`README.zh.md`（doc-sync 门禁要求三件套）。
 
 **测试命令约定（本仓库无 per-package `test` script，一律用根级 vitest 路径过滤）：**
 
 ```bash
-pnpm exec vitest run packages/user-auth
-pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
+pnpm exec vitest run packages/host/user-auth
+pnpm exec vitest run packages/host/user-auth/tests/hash.spec.ts
 ```
 
 **复用既有工具（不要重复实现）：**
@@ -158,11 +158,11 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
 ### Task 2.1: 包脚手架与 scrypt 密码哈希
 
 **Files:**
-- Create: `packages/user-auth/src/hash.ts`
-- Test: `packages/user-auth/tests/hash.spec.ts`
+- Create: `packages/host/user-auth/src/hash.ts`
+- Test: `packages/host/user-auth/tests/hash.spec.ts`
 
 - [ ] **Step 1: 写失败测试（hash.ts）**
-  `packages/user-auth/tests/hash.spec.ts`：
+  `packages/host/user-auth/tests/hash.spec.ts`：
 
   ```ts
   import { describe, expect, it } from 'vitest'
@@ -188,7 +188,7 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
   ```
 
 - [ ] **Step 2: 运行测试确认失败**
-  Run: `pnpm exec vitest run packages/user-auth`
+  Run: `pnpm exec vitest run packages/host/user-auth`
   Expected: FAIL（模块不存在）
 
 - [ ] **Step 3: 实现 `hash.ts`**
@@ -221,20 +221,20 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
   ```
 
 - [ ] **Step 4: 运行测试确认通过**
-  Run: `pnpm exec vitest run packages/user-auth`
+  Run: `pnpm exec vitest run packages/host/user-auth`
   Expected: PASS
 
 - [ ] **Step 5: 提交**
   ```bash
-  git add packages/user-auth
+  git add packages/host/user-auth
   git commit -m "feat(user-auth): scrypt password hashing"
   ```
 
 ### Task 2.2: `users-store.ts`（读取/校验/原子写/再读）
 
 **Files:**
-- Create: `packages/user-auth/src/users-store.ts`
-- Test: `packages/user-auth/tests/users-store.spec.ts`
+- Create: `packages/host/user-auth/src/users-store.ts`
+- Test: `packages/host/user-auth/tests/users-store.spec.ts`
 
 **说明:** 不新建 `paths.ts`——`$DSH_HOME` 解析直接 import `resolveDshHome` / `dshHomePath` from `@deepseek-ai/dsh-home-paths`；原子写直接 import `writeFileAtomic` from `@deepseek-ai/dsh-atomic-write`。
 
@@ -290,8 +290,8 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
 ### Task 2.3: 会话管理（签发/校验/过期/持久化）
 
 **Files:**
-- Create: `packages/user-auth/src/sessions.ts`
-- Test: `packages/user-auth/tests/sessions.spec.ts`
+- Create: `packages/host/user-auth/src/sessions.ts`
+- Test: `packages/host/user-auth/tests/sessions.spec.ts`
 
 **说明:** 会话文件路径用 `dshHomePath('auth-sessions.json')`；原子写复用 `writeFileAtomic`（mode 600）。
 
@@ -320,8 +320,8 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
 ### Task 2.4: 登录限流（XFF 信任链）
 
 **Files:**
-- Create: `packages/user-auth/src/rate-limit.ts`
-- Test: `packages/user-auth/tests/rate-limit.spec.ts`
+- Create: `packages/host/user-auth/src/rate-limit.ts`
+- Test: `packages/host/user-auth/tests/rate-limit.spec.ts`
 
 - [ ] **Step 1: 写失败测试**
   - 每来源 60s 内第 6 次失败 → 拒绝（limit=5）。
@@ -355,10 +355,10 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
 ### Task 2.5: 插件主体（认证钩子 + 登录/登出路由 + fail-closed 启动）
 
 **Files:**
-- Create: `packages/user-auth/src/index.ts`（apply 主体）
-- Create: `packages/user-auth/src/cookie.ts`（cookie 属性与 Secure 开关）
-- Test: `packages/user-auth/tests/plugin.spec.ts`（组合级）
-- Test: `packages/user-auth/tests/cookie.spec.ts`
+- Create: `packages/host/user-auth/src/index.ts`（apply 主体）
+- Create: `packages/host/user-auth/src/cookie.ts`（cookie 属性与 Secure 开关）
+- Test: `packages/host/user-auth/tests/plugin.spec.ts`（组合级）
+- Test: `packages/host/user-auth/tests/cookie.spec.ts`
 
 **启动顺序（关键，评审强制）:** Cordis Loader 对所有配置行**并发**激活（`Promise.allSettled(config.map(create))`），`[Service.init]`（含 webserver `listen`）在激活时执行，因此**不能依赖 cordis.patch.yml 行序**保证 `setAuthenticate` 先于 `listen`。方案：
 
@@ -384,7 +384,7 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
 
 - [ ] **Step 1: 写失败测试（组合级）**
   - 用 test-only cordis.yml 挂载 `user-auth` + `webserver`（参考 `packages/host/webserver/tests/webserver.spec.ts` 的 `loadComposition` 模式），`user-auth` 行带 `inject: [webStartup]` + config 模拟。
-  - 配置一个预置用户；`POST /api/auth/login` 正确凭据 → 200 + `Set-Cookie: __Host-dsh_session=...`；错误凭据 → 401。
+  - 配置一个预置用户；`POST /api/auth/login` 正确凭据 → 200 + `Set-Cookie: __Host-dsh_session=...`（secure 模式）/ `dsh_session=...`（insecure 模式）；错误凭据 → 401。
   - **端点加固**：body > 10KB → 400；畸形 JSON → 400；`GET /api/auth/login` → 405。
   - 未认证 `GET /api/anything` → 302 `/login`（Accept: text/html）或 401 JSON（其他）。
   - 带有效 cookie → 放行。
@@ -404,7 +404,7 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
     maxAgeSeconds: number
   }
 
-  /** 生成 Set-Cookie 头值：__Host-dsh_session=<token>; HttpOnly; SameSite=Strict; Path=/[; Secure]; Max-Age=N */
+  /** 生成 Set-Cookie 头值：secure 时 `__Host-dsh_session=<token>`（RFC 6265bis 要求 __Host- 前缀必须带 Secure），insecure 时 `dsh_session=<token>`（去掉前缀）；其余属性 HttpOnly; SameSite=Strict; Path=/[; Secure]; Max-Age=N */
   export function sessionCookieValue(token: string, opts: SessionCookieOptions): string
   ```
 
@@ -439,11 +439,16 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
   }
   ```
 
-- [ ] **Step 5: 运行确认通过**
+- [ ] **Step 5: 实现并注册 `GET /api/auth/status`（公开路径）**
+  - 返回 `{ configured: boolean }`（users.json 是否有有效账号），供登录页判断 fail-open 无账号态。
+  - 在 Task 2.5 决策表的公开路径中加入 `/api/auth/status`（与 `/api/auth/login`、`/api/auth/logout` 并列）。
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: 运行确认通过**
+  - 测试追加：未认证 `GET /api/auth/status` → 200 `{ configured: true|false }`（公开路径，不要求登录）。
+
+- [ ] **Step 7: 提交**
   ```bash
-  git commit -m "feat(user-auth): auth gate plugin with login/logout routes, fail-closed startup, endpoint hardening"
+  git commit -m "feat(user-auth): auth gate plugin with login/logout/status routes, fail-closed startup, endpoint hardening"
   ```
 
 ---
@@ -500,7 +505,7 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
 ### Task 4.1: 包脚手架与登录页
 
 **Files:**
-- Create: `packages/client/ui-auth/package.json`（参照 `packages/client/ui-skill/package.json`，name `@deepseek-ai/dsh-client-ui-auth`，exports 含 `"."` 与 `"./client"`，`dsh.client.platform: web`，peer/dev 依赖含 `@deepseek-ai/dsh-client-runtime`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`、`@deepseek-ai/dsh-client-locale`、`react`）
+- Create: `packages/client/ui-auth/package.json`（参照 `packages/client/ui-skill/package.json`，name `@deepseek-ai/dsh-client-ui-auth`；`exports` 含 `"."`、`"./invariant"`、`"./client"`；`files` 含 `lib/index.js lib/invariant.js lib/client.js lib/types/**/*.d.ts`；`dsh.client` 含 `inject: ["@deepseek-ai/dsh-client-runtime", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-api-remotes"]` 与 `platform: web`；peer/dev 依赖含 `@deepseek-ai/cordis`、`@deepseek-ai/dsh-invariants`、`@deepseek-ai/dsh-client-runtime`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`、`@deepseek-ai/dsh-client-ui-settings`、`@deepseek-ai/dsh-client-locale`、`@deepseek-ai/dsh-client-test-runtime`（dev）、`react`、`react-dom`）
 - Create: `packages/client/ui-auth/tsconfig.json`
 - Create: `packages/client/ui-auth/src/index.ts`（宿主半：空 `apply()` + `dsh.client` 声明注释）
 - Create: `packages/client/ui-auth/src/invariant.ts`
@@ -516,7 +521,7 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
   - 提交错误凭据 → 显示错误消息（mock fetch 返回 401）。
   - 提交成功 → 设置 `window.location.href = next || '/'`（mock location）。
   - **无账号态**：`GET /api/auth/status` 返回 `{ configured: false }` → 显示"未配置账号，运行 `dsh user add`"且表单禁用。
-    - 说明：`user-auth` 宿主侧需提供 `GET /api/auth/status`（公开路径）返回 `{ configured: boolean }`（users.json 是否有有效账号）——这是客户端获知 fail-open 无账号态的机制，需在 Task 2.5 一并实现并加入决策表公开路径。
+    - 说明：`user-auth` 宿主侧提供 `GET /api/auth/status`（公开路径，Task 2.5 Step 5 实现）返回 `{ configured: boolean }`——这是客户端获知 fail-open 无账号态的机制，已加入决策表公开路径。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -613,7 +618,7 @@ pnpm exec vitest run packages/user-auth/tests/hash.spec.ts
 
 - [ ] **Step 1:** `pnpm run typecheck` 通过
 - [ ] **Step 2:** `pnpm run build` 通过
-- [ ] **Step 3:** `pnpm exec vitest run packages/user-auth packages/client/ui-auth packages/host/webserver packages/client/connection` 通过
+- [ ] **Step 3:** `pnpm exec vitest run packages/host/user-auth packages/client/ui-auth packages/host/webserver packages/client/connection` 通过
 - [ ] **Step 4:** 本地起 `dsh web --insecure-cookie`（loopback，无 `--trusted-host`，无账号 → fail-open + 告警）：`dsh user add demo` 后登录页可登录（`--insecure-cookie` 使本地 HTTP 下 cookie 不带 Secure）。
 - [ ] **Step 5:** 带 `--trusted-host localhost` 且删光账号 → web 拒绝启动（fail-closed）。
 - [ ] **Step 6:** 带 `--trusted-host localhost` 且有账号 → 未认证请求 302 `/login`；登录后可用。
