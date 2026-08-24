@@ -24,7 +24,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 
 ## 架构总览
 
-新增一个宿主插件包 `packages/user-auth/`（认证门禁）和一个客户端插件包 `packages/client/ui-auth/`（登录页 UI）。核心复用 DSH 现有 WebServer 扩展点，不改动 webserver / session / agent 核心。
+新增一个宿主插件包 `packages/user-auth/`（认证门禁）和一个客户端插件包 `packages/client/ui-auth/`（登录页 UI）。对 `packages/host/webserver` 做**最小侵入改动**：仅新增一个可选单席位 `authenticate` 钩子字段与两个调用点（HTTP 分派前、WS upgrade 分派前），不改变任何路由语义、不回退、不涉及 session / agent 核心。
 
 ```
 浏览器 ──HTTPS──> nginx（TLS + 反代，去掉 auth_basic）──> dsh web :3080
@@ -55,44 +55,67 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 }
 ```
 
-- 密码哈希：**Node 内置 `crypto.scrypt`**（`N=16384, r=8, p=1`，随机 16 字节 salt，输出 64 字节），格式 `$scrypt$<salt-hex>$<hash-hex>`。不引入 bcrypt 外部依赖，保持轻量。
-- 文件权限：启动时若存在则校验为普通文件（拒绝 symlink/hardlink，复用 `scripts/init.py` 的安全模式），Unix 下 chmod 600。
-- 缺失或损坏：启动告警；**无有效账号时 web 认证门禁不启用**（保持可访问），并提示先运行账号管理命令。
+- 密码哈希：**Node 内置 `crypto.scrypt`**（`N=16384, r=8, p=1`——Node 默认参数，内存 16MB < 默认 maxmem 32MB；随机 16 字节 salt，输出 64 字节），格式 `$scrypt$<salt-hex>$<hash-hex>`。不引入 bcrypt 外部依赖，保持轻量。
+- 文件安全：启动时用 Node `lstat` 校验为普通文件（拒绝 symlink/hardlink——参考 codex-agent-protocol 仓库 `scripts/init.py` 的安全模式，但此处用 Node 标准库实现），Unix 下 chmod 600。`$DSH_HOME/auth-sessions.json` 同样采用临时文件 + 原子 `rename` + chmod 600。
+- **再读策略**：users.json 每次登录时重新读取（而非仅启动加载），保证运行中执行 `dsh user add` / `remove` 立即生效，避免运维困惑。
+- **无有效账号时的门禁策略（fail-closed）**：webServer 绑定 `0.0.0.0`（公网）且 users.json 缺失/损坏/无账号 → **拒绝启动 web profile**（`dsh web` 报错退出，提示运行 `dsh user add`），绝不 fail-open。仅当绑定 `127.0.0.1`（loopback，本地开发）时允许 fail-open（保持可访问并告警）。
 
 ### 账号管理 CLI
 
-在 `apps/cli` 增加子命令：
+在 `apps/cli` 增加 **launcher 级**子命令（`bin.ts` 的 switch + `args.ts` 新 mode，不启动 profile——先例同 `plugin` / `dump-config`，保证部署前即可创建首个账号，无需先启动 web）：
 
 - `dsh user add <username> [--display-name NAME]`：交互式输入密码（`readline` 关闭回显），写入 users.json。
 - `dsh user set-password <username>`：重置密码。
 - `dsh user list`：列出用户名与显示名（不显示哈希）。
 - `dsh user remove <username>`：删除账号。
 
-所有命令在写入前做 `users.json` 读-改-写，写入临时文件后原子 `rename`，失败回滚。
+所有命令在写入前做 `users.json` 读-改-写，写入临时文件后原子 `rename`（同目录，跨设备安全），失败回滚。非 TTY 环境（如 CI）下密码回显关闭受限，注明平台限制。
 
 ### 登录会话
 
 - 登录接口：`POST /api/auth/login`，JSON body `{ "username": "...", "password": "..." }`。
+  - body 大小限制（如 10KB）；畸形 JSON → 400；`GET /api/auth/login` → 405。
+  - 密码比较用 `crypto.timingSafeEqual`（长度固定为 64 字节哈希，可安全比较）。
 - 校验成功 → 生成随机 32 字节 session token（`crypto.randomBytes`），服务端记录 `token → { username, displayName, expiresAt }`，签发 cookie：
-  - 名：`dsh_session`
+  - 名：`__Host-dsh_session`（Secure + Path=/ + 无 Domain 均满足，公网零成本硬化）
   - `HttpOnly`、`SameSite=Strict`、`Path=/`
   - `Secure`（公网 HTTPS；本地开发通过配置关闭）
   - `Max-Age`：默认 24h（可配置 `--session-ttl`）
-- 会话存储：`$DSH_HOME/auth-sessions.json`（带 TTL，启动时清理过期项）。重启不丢失（文件持久化）。
+- 会话存储：`$DSH_HOME/auth-sessions.json`（带 TTL，启动时清理过期项；临时文件 + 原子 rename + chmod 600）。重启不丢失（文件持久化）。
 - 登出接口：`POST /api/auth/logout`，删除服务端记录并清 cookie。
 - 登录校验失败：统一返回 401 + `{ "error": "invalid credentials" }`，不区分"用户不存在"与"密码错误"。
+- **会话过期后的客户端行为**：SPA 已加载后若会话过期，API 返回 401 / WS 被拒时，浏览器侧统一跳转 `/login?next=<当前路径>`；WS 断开时提示"登录已过期，请重新登录"。
 
 ### 认证拦截（全局门禁）
 
-利用 `WebServer` 三个扩展点（`packages/host/webserver/src/index.ts`）：
+利用 `WebServer` 扩展点（`packages/host/webserver/src/index.ts`）加一个**可选单席位 `authenticate` 钩子**。评估过的替代方案及其排除理由：
 
-1. **HTTP 请求拦截**：`user-auth` 插件在 `registerFallback` 之前注册一个 `prefix: '/'` 路由不可行（route 冲突由 webserver 拒绝）。改为：插件监听 `webserver/index-inject` 之外的机制不可行。**方案**：在 `WebServer` 服务上新增一个可选的 `authenticate` 钩子（Service 字段），`handle()` 在路由匹配前调用；`user-auth` 插件在 init 时注入该钩子。这是对 webserver 的最小侵入改动（一个可选字段 + 一个调用点）。
-   - 未认证且路径为公开路径（`/api/auth/login`、`/api/auth/logout`、静态登录页资源）→ 放行
-   - 未认证且是页面请求（Accept: text/html）→ 302 到 `/login`
-   - 未认证且是 API/其他 → 401 JSON
-   - 已认证 → 放行（`req` 上附加 `req.user = { username, displayName }`）
-2. **WebSocket upgrade 拦截**：同样通过 `authenticate` 钩子在 upgrade 分派前校验 cookie；未认证 → socket 拒绝（`socket.write` HTTP 401 后 `socket.destroy()`）。
-3. **登录/登出路由**：`user-auth` 插件注册 `exact` 路由 `/api/auth/login`、`/api/auth/logout`。
+- `registerFallback` 只覆盖未匹配请求，而 `/api`（connection）、`/plugins`（modules）、WS upgrade 全部绕过 fallback，故 fallback 拦截不可行。
+- `prefix: '/'` 路由经核对 `match()` 只命中 `pathname === '/'`（守卫是 `pathname !== prefix && !pathname.startsWith(prefix + '/')`，`'/' + '/' === '//'`），只能遮蔽 SPA 首页、拦不住任何其他路径，且与 fallback 分属不同席位、不会抛冲突——故也不可行。
+- 事件式 gate（仿 `webserver/index-inject`）对策略判定语义含糊、多监听者有歧义。
+
+因此采用单席位钩子（先例同 `registerFallback`）。契约：
+
+1. **字段**：`authenticate?: (req: IncomingMessage) => Promise<AuthDecision>`，`AuthDecision = 'allow' | { status: 401, json?: unknown } | { status: 302, location: string }`。
+2. **单席位**：setter + disposer；重复设置抛错（与 `registerFallback` 一致）。
+3. **调用点**：`handle()` 在路由匹配**前**调用一次；upgrade 事件处理器在 upgrade 路由分派**前**调用一次。
+4. **安装时机**：必须在监听（`[Service.init]` 的 `listen`）之前安装——激活顺序保证首个请求即被拦截，配套一条启动顺序集成测试。
+5. **WS 拒绝**：复用 `packages/client/connection/src/websocket-downlink.ts:144` 的 `rejectWebSocketUpgrade(socket)` 写 401 后 destroy。
+
+钩子由 `user-auth` 插件在 init 时注入。`user-auth` 同时注册 `exact` 路由 `/api/auth/login`、`/api/auth/logout`。
+
+### 公开路径决策表（未认证请求）
+
+门禁对未认证请求的判定必须精确，避免登录页自身资源死锁（登录页 JS 由 modules 插件的 `prefix: '/plugins'` 路由分发，若一律 401 则登录页 bundle 无法加载）：
+
+| 请求 | 未认证行为 |
+|---|---|
+| `GET/POST /api/auth/login`、`POST /api/auth/logout` | 放行 |
+| 任意路径、`Accept: text/html` 且非 `/login` | 302 → `/login?next=<原路径>` |
+| `/login`（页面） | 放行 |
+| `/plugins/*`（client 插件 bundle）、`/assets/*`、其他静态资源 | 放行（bundle 加载必需） |
+| 其他 API（`/api/*` 非 auth） | 401 JSON |
+| WS upgrade（`/api/events.mux`、`/api/events.host`） | 拒绝（`rejectWebSocketUpgrade`） |
 
 ## 第二节：登录页 UI
 
@@ -101,7 +124,7 @@ DeepSeek Harness（`dsh`）目前部署在公网服务器 `dsh.visitworld.me` �
 - 登录页路由 `/login`：用户名 + 密码 + 提交 + 错误提示（表单组件，复用 `ui-primitives` 样式体系）。
 - 未登录访问任意页面 → 302 `/login`；登录成功 → 跳回原路径（`?next=` 参数）。
 - 登出入口：在 `ui-settings` 或头部加入"登出"按钮（调用 `/api/auth/logout` 后刷新）。
-- 无账号时（门禁未启用）：登录页提示"未配置账号，运行 `dsh user add`"，不显示表单或表单禁用。
+- 无账号时：公网绑定下 web 不启动（见第一节 fail-closed）；loopback 开发态登录页提示"未配置账号，运行 `dsh user add`"，不显示表单或表单禁用。
 
 UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 注册 + `dsh.client` 声明），浏览器半 `src/client/`（登录页 + 登出入口 + 路由注册到现有路由表）。
 
@@ -113,47 +136,52 @@ UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 
 
 ## 第四节：安全与错误处理
 
-- 密码哈希：scrypt（见上），users.json 权限 600，拒绝 symlink。
-- 登录限流：内存滑动窗口，每 IP（取 `X-Forwarded-For` 首项，nginx 已设置）每 60s 最多 5 次失败；超限返回 429。
-- Cookie：HttpOnly / SameSite=Strict / Secure / 24h TTL。
-- users.json 缺失/无账号：门禁禁用 + 启动告警 + 登录页提示。
-- 登录失败：统一 401 消息，不泄露用户存在性。
+- 密码哈希：scrypt（见上），users.json / auth-sessions.json 权限 600，拒绝 symlink（Node `lstat` 校验）。
+- 登录限流：内存滑动窗口，每来源 IP 每 60s 最多 5 次失败；超限返回 429。**X-Forwarded-For 信任链**：仅当 socket 对端为 loopback（受信代理，nginx）时才信任 XFF，且取**最右项**（nginx 追加的 `$remote_addr`）；无 XFF 时回退到 `req.socket.remoteAddress`；直连 :3080 的对端按自身地址计数，XFF 一律不信任。滑动窗口需定期清理过期 IP 条目防内存增长。文档化：共享 NAT 下 5 次/60s 可能误伤同网段多人（可配置放宽）。
+- Cookie：`__Host-dsh_session`（公网）、HttpOnly / SameSite=Strict / Secure / 24h TTL（可配）。
+- **无有效账号（fail-closed）**：公网绑定 `0.0.0.0` 时拒绝启动 web profile；loopback 绑定允许 fail-open + 告警。见第一节。
+- 登录失败：统一 401 消息，不泄露用户存在性；密码比较用 `timingSafeEqual`。
 - 会话文件损坏：视为无会话（要求重新登录），不崩溃。
-- 登录/登出/静态资源路径始终公开；其余全部拦截。
+- 公开路径决策表（见第一节）：auth 端点、登录页、`/plugins/*` 静态资源公开；其余拦截。
 
 ## 第五节：测试
 
 ### 单元测试（`packages/user-auth/tests/`）
 
-- 密码哈希：scrypt 生成/校验、错误密码拒绝、格式解析。
-- users.json：读取/解析/损坏处理/权限校验/symlink 拒绝/原子写。
-- 会话：签发/校验/过期/登出/文件持久化。
-- 限流：窗口内计数、超限拒绝、窗口重置。
+- 密码哈希：scrypt 生成/校验、错误密码拒绝、格式解析、`timingSafeEqual` 路径。
+- users.json：读取/解析/损坏处理/权限校验/symlink 拒绝/原子写/**运行中修改立即生效（再读）**。
+- 会话：签发/校验/过期/登出/文件持久化/损坏文件处理。
+- 限流：窗口内计数、超限拒绝、窗口重置、**XFF 伪造（首项/最右项/直连对端）**、过期条目清理。
 
 ### 集成测试
 
-- 认证钩子：未认证请求 401/302、已认证放行、公开路径放行、`req.user` 附加。
-- WS upgrade：未认证拒绝、已认证放行。
-- CLI：`dsh user add/set-password/list/remove` 全流程（临时 `$DSH_HOME`）。
+- 认证钩子：未认证请求 401/302、已认证放行、公开路径放行（含 `/plugins/*` bundle）、`req.user` 附加。
+- **启动顺序**：`authenticate` 钩子在监听前安装，首个请求即被拦截。
+- WS upgrade：未认证拒绝（`rejectWebSocketUpgrade`）、已认证放行。
+- CLI：`dsh user add/set-password/list/remove` 全流程（临时 `$DSH_HOME`）、**移除最后一个账号后公网启动被拒**。
+- 会话过期：API 401 → 浏览器跳转 `/login`；WS 被拒提示。
 
 ### UI 测试
 
-- 登录页渲染、错误提示、`?next=` 重定向、登出入口。
-- 无账号提示态。
+- 登录页渲染、错误提示、`?next=` 重定向、登出入口、会话过期跳转。
+- 无账号提示态（loopback fail-open 时）。
 
 ## 部署（目标环境 dsh.visitworld.me）
 
 1. 在本地仓库实现并 `pnpm run build` 通过，全量测试通过。
-2. 服务器侧（root@visitworld.me）：
-   - 停止当前 dsh 服务（systemd 或当前进程 354031），备份 `$DSH_HOME`。
-   - 部署新构建产物（`dsh` 可执行 + 相关 packages）到服务器，用 `dsh user add` 创建初始账号。
-   - 启动新 dsh。
-3. nginx：从 `dsh.visitworld.me` server 块移除 `auth_basic` / `auth_basic_user_file`，`nginx -t && systemctl reload nginx`。
-4. 验证：
+2. **插件组合接入**：`user-auth` 加入 `packages/bundle/web-app/cordis.patch.yml`（宿主插件行），`ui-auth` 加入 web profile 的 client roster 与 UI 组合（参照 `ui-skill` / `ui-settings` 的注册方式）。
+3. **保留 `--trusted-host dsh.visitworld.me`**：connection 插件的 Host 信任围栏（`packages/client/connection/src/api-request-trust.ts` 的 `isTrustedApiRequest`/`trustedHosts`）与认证门禁正交——公网下 Host 头非 loopback，去掉 basic auth 时若一并去掉 `--trusted-host`，登录成功后所有 `/api` 与 WS 仍会被围栏 403。启动命令保持 `dsh web --no-open --host 127.0.0.1 --port 3080 --trusted-host dsh.visitworld.me`。
+4. 服务器侧（root@visitworld.me）：
+   - 停止当前 dsh 服务，备份 `$DSH_HOME`（含 users.json 将新建）。
+   - 部署新构建产物，用 `dsh user add` 创建初始账号。
+   - 启动新 dsh（仍监听 127.0.0.1:3080）。
+5. nginx：从 `dsh.visitworld.me` server 块移除 `auth_basic` / `auth_basic_user_file`，`nginx -t && systemctl reload nginx`。确认防火墙只让 nginx 触达 :3080（XFF 信任的前提）。
+6. 验证：
    - `curl -I https://dsh.visitworld.me/` 返回 302 → `/login`（不再是 401 basic auth）。
    - 浏览器登录后可用；登出后访问被拒。
    - WebSocket 连接在未登录时被拒、登录后正常（agent 会话可用）。
-5. 回滚预案：保留旧 dsh 产物与 nginx 配置备份，任一步失败即恢复。
+   - 未登录访问 `/api/...` 返回 401；`/plugins/...` 可加载。
+7. 回滚预案：保留旧 dsh 产物与 nginx 配置备份，任一步失败即恢复。
 
 ## 非目标（明确排除）
 
@@ -161,4 +189,4 @@ UI 包结构遵循现有 client 插件约定：宿主半 `index.ts`（空 apply 
 - 不实现注册、找回密码、邮箱验证、2FA、OAuth。
 - 不实现 TLS（nginx 管理）。
 - 不实现审计日志、角色权限分级。
-- 不改动 agent loop、session 模型、事件流、持久化格式。
+- 不改动 agent loop、session 模型、事件流、持久化格式；对 webserver 仅新增可选 `authenticate` 钩子字段与两个调用点，不改变路由语义。
