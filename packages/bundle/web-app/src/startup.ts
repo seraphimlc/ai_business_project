@@ -1,6 +1,7 @@
 /**
  * The web app's command-line provider: it parses the `dsh --profile web` flag
- * family (`--host`, `--port`, `--trusted-host`, `--no-open`) and its `--help`
+ * family (`--host`, `--port`, `--trusted-host`, `--no-open`,
+ * `--session-ttl-hours`, `--insecure-cookie`) and its `--help`
  * text, then provides the immutable values as {@link WEB_STARTUP_SERVICE}.
  * Ordinary rows inject that service before reading it from lazy config.
  * @module @deepseek-ai/dsh-web-app/startup
@@ -29,6 +30,10 @@ export interface WebStartupValues {
   port?: number
   /** Explicit `--trusted-host` authorities, in argument order. */
   trustedHosts: string[]
+  /** Auth session lifetime in hours (`--session-ttl-hours`); 24 when unset. */
+  sessionTtlHours: number
+  /** Whether the auth session cookie carries Secure; false only with `--insecure-cookie`. */
+  secureCookie: boolean
 }
 
 /** The web flag family, as commander parsed it. */
@@ -37,6 +42,8 @@ interface WebOptions {
   open: boolean
   port?: string
   trustedHost?: string[]
+  sessionTtlHours?: string
+  insecureCookie?: boolean
 }
 
 /**
@@ -52,6 +59,8 @@ function webCommand(): Command {
     .option('--no-open', 'do not open the Web UI in the default browser')
     .option('--port <port>', 'listen port; pass 0 to let the OS pick a free one')
     .option('--trusted-host <authority...>', 'extra authority the /api browser-trust fence accepts (host or host:port; repeatable)')
+    .option('--session-ttl-hours <hours>', 'auth session TTL in hours', '24')
+    .option('--insecure-cookie', 'allow non-Secure auth cookie (local HTTP dev only)')
     .addHelpText('after', `
 Examples:
   dsh --profile web                          serve on the composed host and port
@@ -82,6 +91,8 @@ export function apply(ctx: Context): void {
       ...options.host !== undefined && { host: options.host },
       ...options.port !== undefined && { port: Number(options.port) },
       trustedHosts: options.trustedHost ?? [],
+      sessionTtlHours: options.sessionTtlHours !== undefined ? Number(options.sessionTtlHours) : 24,
+      secureCookie: options.insecureCookie !== true,
     } satisfies WebStartupValues)
   })
   parseCmdline(ctx, program)

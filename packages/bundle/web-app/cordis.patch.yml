@@ -143,6 +143,20 @@
         surfaceContext: true
         trustedHosts: !!js ctx.webStartup.trustedHosts
 
+    # The auth gate: claims the webserver authenticate seat (before it ever
+    # listens) and serves /api/auth/*, reading the web flags through the same
+    # webStartup injection as the rows above. Fail-closed with trustedHosts,
+    # fail-open without — see @deepseek-ai/dsh-user-auth. Loader row order is
+    # not guaranteed; the gate's hook timing is owned by its own
+    # ctx.inject(['webServer']) wait.
+    - id: user-auth
+      name: '@deepseek-ai/dsh-user-auth'
+      inject: [webStartup]
+      config:
+        trustedHosts: !!js 'ctx.webStartup.trustedHosts'
+        sessionTtlHours: !!js 'ctx.webStartup.sessionTtlHours'
+        secureCookie: !!js 'ctx.webStartup.secureCookie'
+
     # The client-plugin reload chain, always mounted: it is idle until a
     # rebuild watcher (pnpm run dev:web) actually rewrites client bundles. It
     # is a row rather than a child of web-runtime because its node half is a
@@ -247,6 +261,11 @@
 
     - id: ui-skill
       name: '@deepseek-ai/dsh-client-ui-skill'
+
+    # Auth surface: the login page and session guard over the /api/auth
+    # routes served by the user-auth host gate.
+    - id: ui-auth
+      name: '@deepseek-ai/dsh-client-ui-auth'
 
     - id: ui-subagent
       name: '@deepseek-ai/dsh-client-ui-subagent'
