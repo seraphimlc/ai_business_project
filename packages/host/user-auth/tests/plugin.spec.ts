@@ -10,6 +10,7 @@
  */
 
 import { once } from 'node:events'
+import { request as httpRequest } from 'node:http'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -121,6 +122,21 @@ async function request(port: number, path: string, init?: RequestInit): Promise<
   return { status: response.status, body: await response.text(), headers: response.headers }
 }
 
+type RawResponse = { status: number; location: string | undefined }
+
+/** Raw node:http GET carrying arbitrary headers — fetch forbids setting the
+ * `Cookie` header, so session-bearing requests must go through this. */
+async function rawRequest(port: number, path: string, headers: Record<string, string>): Promise<RawResponse> {
+  return await new Promise((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port, path, headers }, (res) => {
+      res.resume()
+      resolve({ status: res.statusCode ?? 0, location: res.headers.location })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 /** POST one JSON login body; returns the status, body, and the Set-Cookie header. */
 async function login(port: number, body: string): Promise<{ status: number; body: string; setCookie: string | null }> {
   const response = await fetch(`http://127.0.0.1:${String(port)}/api/auth/login`, {
@@ -218,18 +234,45 @@ describe('user-auth gate composition', () => {
     expect(JSON.parse(json.body)).toEqual({ error: 'unauthorized' })
   })
 
-  it('passes the /login page through unauthenticated (no redirect loop)', { timeout: 60_000 }, async () => {
+  it('serves a standalone /login page unauthenticated (no SPA, no redirect loop)', { timeout: 60_000 }, async () => {
     const loaded = await loadComposition({ trustedHosts: ['dsh.visitworld.me'] }, seedUser)
-    const server = loaded.webServer
-    const port = server.port
-    server.register({ kind: 'exact', path: '/login', handler: (_req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end('LOGIN PAGE') } })
+    const port = loaded.webServer.port
 
-    // HTML navigation to /login must reach the page: a gate that redirects
-    // /login back to /login would loop forever. Both Accept shapes pass.
-    const page = await request(port, '/login', { headers: { accept: 'text/html' } })
-    expect(page.status).toBe(200)
-    expect(page.body).toBe('LOGIN PAGE')
+    // HTML navigation to /login must reach a login form directly — the DSH
+    // SPA cannot initialize behind the gate (its startup API answers 401), so
+    // the gate serves its own static page. A gate that redirected /login back
+    // to /login would loop forever; both Accept shapes must pass.
+    const html = await request(port, '/login', { headers: { accept: 'text/html' } })
+    expect(html.status).toBe(200)
+    expect(html.headers.get('content-type')).toContain('text/html')
+    // Standalone page: contains the login form, never the SPA module loader.
+    expect(html.body).toContain('login-form')
+    expect(html.body).toContain('/api/auth/login')
+    expect(html.body).not.toContain('__DSH_BOOT__')
     expect((await request(port, '/login')).status).toBe(200)
+
+    // next is validated to a same-origin path (no open redirect).
+    const withNext = await request(port, '/login?next=%2Fworkspace')
+    expect(withNext.status).toBe(200)
+    expect(withNext.body).toContain('/workspace')
+    const evil = await request(port, '/login?next=https%3A%2F%2Fevil.example')
+    expect(evil.status).toBe(200)
+    expect(evil.body).not.toContain('evil.example')
+  })
+
+  it('sends an authenticated /login visitor back to the app (302)', { timeout: 60_000 }, async () => {
+    const loaded = await loadComposition({ trustedHosts: ['dsh.visitworld.me'] }, seedUser)
+    const port = loaded.webServer.port
+    const ok = await login(port, JSON.stringify({ username: USERNAME, password: PASSWORD }))
+    expect(ok.status).toBe(200)
+    const cookie = ok.setCookie!.split(';')[0]!
+
+    const back = await rawRequest(port, '/login', { cookie })
+    expect(back.status).toBe(302)
+    expect(back.location).toBe('/')
+    const withNext = await rawRequest(port, '/login?next=%2Fworkspace', { cookie })
+    expect(withNext.status).toBe(302)
+    expect(withNext.location).toBe('/workspace')
   })
 
   it('serves the root favicon and manifest unauthenticated', { timeout: 60_000 }, async () => {

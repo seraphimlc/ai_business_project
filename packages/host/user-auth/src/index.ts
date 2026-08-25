@@ -18,6 +18,7 @@ import { openUsersStore } from './users-store.ts'
 import { openSessionStore } from './sessions.ts'
 import { createRateLimiter } from './rate-limit.ts'
 import { INSECURE_SESSION_COOKIE_NAME, SECURE_SESSION_COOKIE_NAME, sessionCookieValue } from './cookie.ts'
+import { renderLoginPage, safeNextPath } from './login-page.ts'
 
 export { hashPassword, verifyPassword } from './hash.ts'
 export { isValidUsername, openUsersStore, type StoredUser, type UsersFile } from './users-store.ts'
@@ -258,7 +259,41 @@ export function apply(ctx: Context, config: UserAuthConfig): void {
       res.end(JSON.stringify({ configured: users.load().length > 0 }))
     }
 
+    /**
+     * Serve the standalone login page. The DSH web shell cannot initialize
+     * behind the gate (its startup API calls and WebSocket handshake answer
+     * 401), so `/login` is an independent page that talks only to the gate's
+     * public endpoints. An already-authenticated visitor is sent back to the
+     * app instead of seeing the form again.
+     */
+    const loginPageHandler: WebRoute['handler'] = async (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, { 'Content-Type': 'application/json', Allow: 'GET, HEAD' })
+        res.end(JSON.stringify({ error: 'method not allowed' }))
+        return
+      }
+      const rawUrl = req.url ?? '/'
+      const next = safeNextPath(new URL(rawUrl, 'http://x').searchParams.get('next'))
+      const token = readSessionToken(req.headers.cookie)
+      if (token !== undefined) {
+        const identity = await sessions.validate(token)
+        if (identity !== null) {
+          res.writeHead(302, { Location: next })
+          res.end()
+          return
+        }
+      }
+      const body = renderLoginPage(next)
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Length': Buffer.byteLength(body),
+        'Cache-Control': 'no-store',
+      })
+      res.end(req.method === 'HEAD' ? undefined : body)
+    }
+
     apiCtx.effect(() => webServer.setAuthenticate(authenticate), 'user-auth: authenticate gate')
+    apiCtx.effect(() => webServer.register({ kind: 'exact', path: '/login', handler: loginPageHandler }), 'user-auth: login page route')
     apiCtx.effect(() => webServer.register({ kind: 'exact', path: '/api/auth/login', handler: loginHandler }), 'user-auth: login route')
     apiCtx.effect(() => webServer.register({ kind: 'exact', path: '/api/auth/logout', handler: logoutHandler }), 'user-auth: logout route')
     apiCtx.effect(() => webServer.register({ kind: 'exact', path: '/api/auth/status', handler: statusHandler }), 'user-auth: status route')
