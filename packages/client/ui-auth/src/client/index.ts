@@ -23,8 +23,8 @@
  * the gate's logout endpoint and reloads; and because the host can revoke a
  * session at any time (user-auth's idle/single-session policy, or a restart
  * invalidating every cookie), this half also guards the two transports the
- * app talks to the host through: a 401/403 API answer or an event-stream
- * socket dying before it ever opened both mean the session is already gone,
+ * app talks to the host through: a 401 API answer or an event-stream socket
+ * dying before it ever opened both mean the session is already gone,
  * so the page bounces back to `/login?next=<current path>`.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
@@ -113,13 +113,14 @@ function redirectToLogin(): void {
 }
 
 /**
- * Wrap the page's fetch so a 401/403 from any non-public endpoint — the gate
+ * Wrap the page's fetch so a 401 from any non-public endpoint — the gate
  * revoked the session, or a host restart invalidated it — bounces the whole
- * page to the login surface with the current path preserved. The response
- * still flows through to the caller; the page is navigating away anyway. The
- * gate's public auth endpoints are excluded because they are REACHABLE while
- * logged out by design. `WebApiClient.doFetch` funnels every RPC read and
- * write through `globalThis.fetch`, so this one wrap covers the API surface.
+ * page to the login surface with the current path preserved. A 403 is a
+ * permission or browser-trust decision and must remain available to the
+ * caller; it does not prove that the session expired. The gate's public auth
+ * endpoints are excluded because they are REACHABLE while logged out by
+ * design. `WebApiClient.doFetch` funnels every RPC read and write through
+ * `globalThis.fetch`, so this one wrap covers the API surface.
  * @param original - the fetch to delegate to.
  * @returns the wrapping fetch.
  */
@@ -127,7 +128,7 @@ function wrapFetch(original: typeof globalThis.fetch): typeof globalThis.fetch {
   return (input, init) => {
     const response = original(input, init)
     void response.then((result) => {
-      if ((result.status === 401 || result.status === 403) && !PUBLIC_AUTH_PATHS.has(pathOf(input))) {
+      if (result.status === 401 && !PUBLIC_AUTH_PATHS.has(pathOf(input))) {
         redirectToLogin()
       }
     }).catch(() => {

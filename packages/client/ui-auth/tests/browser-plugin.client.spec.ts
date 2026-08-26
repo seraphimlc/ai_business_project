@@ -454,18 +454,27 @@ describe('logout row + session-expiry guards', () => {
     expect(logout?.init?.credentials).toBe('include')
   })
 
-  it('redirects to /login?next=<current path> when a non-auth API answers 401/403', async () => {
+  it('redirects to /login?next=<current path> when a non-auth API answers 401', async () => {
     stubFetch({
       '/api/workspace/describe': () => new Response('expired', { status: 401 }),
-      '/api/workspace/mutate': () => new Response('expired', { status: 403 }),
     })
     const location = stubLocation({ pathname: '/workspace', href: 'http://localhost/workspace' })
     const { ctx } = await bench()
     await ctx.plugin({ inject: [...inject], apply }).await()
-    for (const url of ['/api/workspace/describe', '/api/workspace/mutate']) {
-      await fetch(url)
-    }
+    await fetch('/api/workspace/describe')
     expect(location.href).toBe('/login?next=%2Fworkspace')
+  })
+
+  it('does not redirect when a non-auth API answers 403', async () => {
+    stubFetch({
+      '/api/credentials.describe': () => new Response('forbidden', { status: 403 }),
+    })
+    const location = stubLocation({ pathname: '/', href: 'http://localhost/' })
+    const { ctx } = await bench()
+    await ctx.plugin({ inject: [...inject], apply }).await()
+    await fetch('/api/credentials.describe')
+    await Promise.resolve()
+    expect(location.href).toBe('http://localhost/')
   })
 
   it('never redirects for 401/403 on the public auth endpoints (login, logout, status)', async () => {
