@@ -13,10 +13,10 @@ describe('deterministic fixtures and catalog', () => {
     expect(demoState.organizations.filter((item) => item.kind === 'enterprise')).toHaveLength(3);
     expect(demoState.organizations.filter((item) => item.kind === 'enterprise' && item.status === '待审核')).toHaveLength(1);
     expect(demoState.organizations.filter((item) => item.kind === 'provider')).toHaveLength(2);
-    expect(demoState.products).toHaveLength(2);
+    expect(demoState.products).toHaveLength(11);
     expect(demoState.productAssets.length).toBeGreaterThan(0);
     expect(demoState.leads).toHaveLength(1);
-    expect(demoState.complianceCases).toHaveLength(1);
+    expect(demoState.complianceCases).toHaveLength(2);
     expect(demoState.inquiries).toHaveLength(3);
     expect(demoState.serviceRequests).toHaveLength(3);
     expect(demoState.quotations).toHaveLength(1);

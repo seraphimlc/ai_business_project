@@ -7,12 +7,12 @@ import { CANONICAL_STATUSES } from './types';
 export const STORAGE_KEY = 'cross-border-scenario-platform:demo-state:v1';
 
 export interface HydrationResult { state: DomainState; notice?: string; }
-const stateCollections = ['organizations', 'users', 'roles', 'projectMemberships', 'partyCompanies', 'contacts', 'customerRelations', 'supplierRelations', 'providerRelations', 'products', 'skus', 'productAttributes', 'productAssets', 'productVersions', 'channelListings', 'leads', 'customerProfiles', 'touchTasks', 'followUps', 'opportunities', 'inquiries', 'matchResults', 'serviceRequests', 'logisticsQuotes', 'quotations', 'quotationVersions', 'quotationFeedbacks', 'complianceCases', 'risks', 'rectificationTasks', 'complianceMaterials', 'reviewRecords', 'orders', 'fulfillments', 'fulfillmentNodes', 'riskEvents', 'inventories', 'inboundRecords', 'reports', 'dataTasks', 'ruleConfigurations', 'platformProjects', 'sceneRuns', 'candidates', 'tasks', 'notifications', 'files', 'versionRecords', 'auditLogs', 'integrations'] as const;
+const stateCollections = ['organizations', 'users', 'roles', 'projectMemberships', 'partyCompanies', 'contacts', 'customerRelations', 'supplierRelations', 'providerRelations', 'products', 'skus', 'productAttributes', 'productAssets', 'productVersions', 'channelListings', 'leads', 'customerProfiles', 'touchTasks', 'followUps', 'opportunities', 'inquiries', 'matchResults', 'serviceRequests', 'logisticsQuotes', 'quotations', 'quotationVersions', 'quotationFeedbacks', 'complianceCases', 'risks', 'rectificationTasks', 'complianceMaterials', 'reviewRecords', 'orders', 'fulfillments', 'fulfillmentNodes', 'riskEvents', 'inventories', 'inboundRecords', 'reports', 'dataTasks', 'ruleConfigurations', 'platformProjects', 'platformListings', 'productCandidates', 'sourceOffers', 'productCerts', 'sceneRuns', 'candidates', 'tasks', 'notifications', 'files', 'versionRecords', 'auditLogs', 'integrations'] as const;
 
 const statusCollectionMap: Partial<Record<typeof stateCollections[number], keyof typeof CANONICAL_STATUSES>> = {
-  organizations: 'Organization', users: 'User', roles: 'Role', projectMemberships: 'ProjectMembership', partyCompanies: 'PartyCompany', contacts: 'Contact', customerRelations: 'CustomerRelation', supplierRelations: 'SupplierRelation', providerRelations: 'ProviderRelation', products: 'Product', skus: 'SKU', productAttributes: 'ProductAttribute', productAssets: 'ProductAsset', productVersions: 'ProductVersion', channelListings: 'ChannelListing', leads: 'Lead', customerProfiles: 'CustomerProfile', touchTasks: 'TouchTask', followUps: 'FollowUp', opportunities: 'Opportunity', inquiries: 'Inquiry', matchResults: 'MatchResult', serviceRequests: 'ServiceRequest', logisticsQuotes: 'LogisticsQuote', quotations: 'Quotation', quotationVersions: 'QuotationVersion', complianceCases: 'ComplianceCase', risks: 'RiskItem', rectificationTasks: 'RectificationTask', complianceMaterials: 'ComplianceMaterial', reviewRecords: 'ReviewRecord', orders: 'Order', fulfillments: 'Fulfillment', fulfillmentNodes: 'FulfillmentNode', riskEvents: 'RiskEvent', inventories: 'Inventory', inboundRecords: 'InboundRecord', reports: 'Report', dataTasks: 'DataTask', ruleConfigurations: 'RuleConfiguration', platformProjects: 'Organization', sceneRuns: 'SceneRun', candidates: 'CandidateResult', tasks: 'Task', notifications: 'Notification', files: 'FileAsset', auditLogs: 'AuditLog', integrations: 'IntegrationRecord',
+  organizations: 'Organization', users: 'User', roles: 'Role', projectMemberships: 'ProjectMembership', partyCompanies: 'PartyCompany', contacts: 'Contact', customerRelations: 'CustomerRelation', supplierRelations: 'SupplierRelation', providerRelations: 'ProviderRelation', products: 'Product', skus: 'SKU', productAttributes: 'ProductAttribute', productAssets: 'ProductAsset', productVersions: 'ProductVersion', channelListings: 'ChannelListing', leads: 'Lead', customerProfiles: 'CustomerProfile', touchTasks: 'TouchTask', followUps: 'FollowUp', opportunities: 'Opportunity', inquiries: 'Inquiry', matchResults: 'MatchResult', serviceRequests: 'ServiceRequest', logisticsQuotes: 'LogisticsQuote', quotations: 'Quotation', quotationVersions: 'QuotationVersion', complianceCases: 'ComplianceCase', risks: 'RiskItem', rectificationTasks: 'RectificationTask', complianceMaterials: 'ComplianceMaterial', reviewRecords: 'ReviewRecord', orders: 'Order', fulfillments: 'Fulfillment', fulfillmentNodes: 'FulfillmentNode', riskEvents: 'RiskEvent', inventories: 'Inventory', inboundRecords: 'InboundRecord', reports: 'Report', dataTasks: 'DataTask', ruleConfigurations: 'RuleConfiguration', platformProjects: 'Organization', platformListings: 'PlatformListing', productCandidates: 'ProductCandidate', sourceOffers: 'SourceOffer', productCerts: 'ProductCert', sceneRuns: 'SceneRun', candidates: 'CandidateResult', tasks: 'Task', notifications: 'Notification', files: 'FileAsset', auditLogs: 'AuditLog', integrations: 'IntegrationRecord',
 };
-const collectionByObjectType: Record<string, string> = { Organization: 'organizations', User: 'users', Role: 'roles', ProjectMembership: 'projectMemberships', PartyCompany: 'partyCompanies', Contact: 'contacts', CustomerRelation: 'customerRelations', SupplierRelation: 'supplierRelations', ProviderRelation: 'providerRelations', Product: 'products', SKU: 'skus', ProductAttribute: 'productAttributes', ProductAsset: 'productAssets', ProductVersion: 'productVersions', ChannelListing: 'channelListings', Lead: 'leads', CustomerProfile: 'customerProfiles', TouchTask: 'touchTasks', FollowUp: 'followUps', Opportunity: 'opportunities', Inquiry: 'inquiries', MatchResult: 'matchResults', ServiceRequest: 'serviceRequests', LogisticsQuote: 'logisticsQuotes', Quotation: 'quotations', QuotationVersion: 'quotationVersions', ComplianceCase: 'complianceCases', RiskItem: 'risks', RectificationTask: 'rectificationTasks', ComplianceMaterial: 'complianceMaterials', ReviewRecord: 'reviewRecords', Order: 'orders', Fulfillment: 'fulfillments', FulfillmentNode: 'fulfillmentNodes', RiskEvent: 'riskEvents', Inventory: 'inventories', InboundRecord: 'inboundRecords', Report: 'reports', DataTask: 'dataTasks', RuleConfiguration: 'ruleConfigurations', PlatformProject: 'platformProjects', SceneRun: 'sceneRuns', CandidateResult: 'candidates', Task: 'tasks', Notification: 'notifications', FileAsset: 'files', VersionRecord: 'versionRecords', AuditLog: 'auditLogs', IntegrationRecord: 'integrations' };
+const collectionByObjectType: Record<string, string> = { Organization: 'organizations', User: 'users', Role: 'roles', ProjectMembership: 'projectMemberships', PartyCompany: 'partyCompanies', Contact: 'contacts', CustomerRelation: 'customerRelations', SupplierRelation: 'supplierRelations', ProviderRelation: 'providerRelations', Product: 'products', SKU: 'skus', ProductAttribute: 'productAttributes', ProductAsset: 'productAssets', ProductVersion: 'productVersions', ChannelListing: 'channelListings', Lead: 'leads', CustomerProfile: 'customerProfiles', TouchTask: 'touchTasks', FollowUp: 'followUps', Opportunity: 'opportunities', Inquiry: 'inquiries', MatchResult: 'matchResults', ServiceRequest: 'serviceRequests', LogisticsQuote: 'logisticsQuotes', Quotation: 'quotations', QuotationVersion: 'quotationVersions', ComplianceCase: 'complianceCases', RiskItem: 'risks', RectificationTask: 'rectificationTasks', ComplianceMaterial: 'complianceMaterials', ReviewRecord: 'reviewRecords', Order: 'orders', Fulfillment: 'fulfillments', FulfillmentNode: 'fulfillmentNodes', RiskEvent: 'riskEvents', Inventory: 'inventories', InboundRecord: 'inboundRecords', Report: 'reports', DataTask: 'dataTasks', RuleConfiguration: 'ruleConfigurations', PlatformProject: 'platformProjects', PlatformListing: 'platformListings', ProductCandidate: 'productCandidates', SourceOffer: 'sourceOffers', ProductCert: 'productCerts', SceneRun: 'sceneRuns', CandidateResult: 'candidates', Task: 'tasks', Notification: 'notifications', FileAsset: 'files', VersionRecord: 'versionRecords', AuditLog: 'auditLogs', IntegrationRecord: 'integrations' };
 function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === 'object' && !Array.isArray(value)); }
 function hasString(record: Record<string, unknown>, key: string): boolean { return typeof record[key] === 'string' && Boolean(record[key]); }
 function hasNumber(record: Record<string, unknown>, key: string): boolean { return typeof record[key] === 'number' && Number.isFinite(record[key]); }
@@ -30,7 +30,7 @@ export function validatePersistedState(value: unknown): value is DomainState {
     if (key === 'users' && (!hasString(record, 'name') || !hasString(record, 'roleId'))) return false;
     if (key === 'contacts' && (!hasString(record, 'partyCompanyId') || !hasString(record, 'name') || !hasString(record, 'email'))) return false;
     if (key === 'productAttributes' && (!hasString(record, 'productId') || !hasString(record, 'name') || !hasString(record, 'value'))) return false;
-    if (key === 'roles' && (!hasString(record, 'name') || !['enterprise_owner', 'product_operator', 'sales_operator', 'compliance_operator', 'fulfillment_operator', 'service_provider', 'platform_operator'].includes(String(record.code)))) return false;
+    if (key === 'roles' && (!hasString(record, 'name') || !['enterprise_owner', 'product_operator', 'sales_operator', 'compliance_operator', 'fulfillment_operator', 'service_provider', 'platform_operator', 'customer'].includes(String(record.code)))) return false;
     if (key === 'projectMemberships' && (!hasString(record, 'userId') || !hasString(record, 'roleId'))) return false;
     if (key === 'products' && (!hasString(record, 'name') || !hasString(record, 'description') || !hasString(record, 'ownerId') || !hasNumber(record, 'currentVersion'))) return false;
     if (key === 'leads' && (!hasString(record, 'name') || !hasString(record, 'companyId') || !hasNumber(record, 'version'))) return false;
@@ -65,6 +65,8 @@ export function validatePersistedState(value: unknown): value is DomainState {
   const get = (collection: string, id: unknown) => typeof id === 'string' ? (value[collection] as Record<string, unknown>[] | undefined)?.find((record) => record.id === id) : undefined;
   const scoped = (collection: string, id: unknown, owner: Record<string, unknown>, crossOrg = false) => { const target = get(collection, id); return Boolean(target && (crossOrg ? sameProject(target, owner) : sameScope(target, owner))); };
   for (const record of value.productAssets as Record<string, unknown>[]) if (!scoped('products', record.productId, record) || !scoped('files', record.fileAssetId, record)) return false;
+  for (const record of value.platformListings as Record<string, unknown>[]) if (!scoped('products', record.productId, record)) return false;
+  for (const record of value.productCerts as Record<string, unknown>[]) if (!scoped('products', record.productId, record)) return false;
   for (const record of value.productVersions as Record<string, unknown>[]) if (!scoped('products', record.productId, record)) return false;
   for (const record of value.channelListings as Record<string, unknown>[]) if (!scoped('products', record.productId, record)) return false;
   for (const record of value.risks as Record<string, unknown>[]) if (!scoped('complianceCases', record.caseId, record)) return false;
@@ -119,14 +121,70 @@ export function validatePersistedState(value: unknown): value is DomainState {
 export function hydratePersistedState(): HydrationResult {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { state: createInitialState() };
-    const parsed: unknown = JSON.parse(raw);
-    const valid = validatePersistedState(parsed);
+    const base: unknown = raw ? JSON.parse(raw) : createInitialState();
+    const merged = mergeCrossEndInquiries(base);
+    const valid = validatePersistedState(merged);
     if (!valid) return { state: createInitialState(), notice: '本地演示数据无效，已恢复为初始数据。' };
-    return { state: parsed as DomainState };
+    return { state: merged as DomainState };
   } catch {
     return { state: createInitialState(), notice: '本地演示数据无效，已恢复为初始数据。' };
   }
+}
+
+// 两端（pc.visitworld.me / h5.visitworld.me）通过共享 cookie 同步客户提交的询价，
+// 让 H5 提交的询价在 PC 平台工作台立即可见；cookie 不可用时静默跳过。
+export const INQUIRY_SYNC_COOKIE = 'h5_inquiry_sync';
+export const INQUIRY_SYNC_LIMIT = 3;
+export interface InquirySyncPayload { inquiries: unknown[]; sceneRuns: unknown[]; matchResults: unknown[]; serviceRequests: unknown[]; }
+
+function isInquirySyncPayload(value: unknown): value is InquirySyncPayload {
+  return isRecord(value) && Array.isArray(value.inquiries) && Array.isArray(value.sceneRuns) && Array.isArray(value.matchResults) && Array.isArray(value.serviceRequests);
+}
+
+export function readInquirySyncCookie(): InquirySyncPayload | undefined {
+  try {
+    const part = document.cookie.split('; ').find((entry) => entry.startsWith(`${INQUIRY_SYNC_COOKIE}=`));
+    if (!part) return undefined;
+    const parsed: unknown = JSON.parse(decodeURIComponent(part.slice(INQUIRY_SYNC_COOKIE.length + 1)));
+    return isInquirySyncPayload(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeInquirySyncCookie(state: DomainState): void {
+  try {
+    const inquiries = state.inquiries.filter((item) => item.customerId === 'party-buyer').sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, INQUIRY_SYNC_LIMIT);
+    if (!inquiries.length) return;
+    const ids = new Set(inquiries.map((item) => item.id));
+    const payload: InquirySyncPayload = {
+      inquiries: inquiries as unknown[],
+      sceneRuns: state.sceneRuns.filter((item) => ids.has(item.targetObject.id) && item.targetObject.type === 'Inquiry') as unknown[],
+      matchResults: state.matchResults.filter((item) => ids.has(item.inquiryId)) as unknown[],
+      serviceRequests: state.serviceRequests.filter((item) => ids.has(item.inquiryId)) as unknown[],
+    };
+    const value = `${INQUIRY_SYNC_COOKIE}=${encodeURIComponent(JSON.stringify(payload))}; path=/; domain=.visitworld.me; max-age=86400; samesite=lax; secure`;
+    document.cookie = value;
+  } catch {
+    // cookie 不可用时（例如本地开发域名）静默跳过跨端同步
+  }
+}
+
+export function mergeCrossEndInquiries(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.inquiries) || !Array.isArray(value.sceneRuns) || !Array.isArray(value.matchResults) || !Array.isArray(value.serviceRequests)) return value;
+  const synced = readInquirySyncCookie();
+  if (!synced) return value;
+  const addMissing = <T extends Record<string, unknown>>(target: T[], candidates: unknown[]) => {
+    for (const candidate of candidates) {
+      if (!isRecord(candidate) || typeof candidate.id !== 'string' || !candidate.id || target.some((item) => item.id === candidate.id)) continue;
+      target.push(candidate as T);
+    }
+  };
+  addMissing(value.inquiries as Record<string, unknown>[], synced.inquiries);
+  addMissing(value.sceneRuns as Record<string, unknown>[], synced.sceneRuns);
+  addMissing(value.matchResults as Record<string, unknown>[], synced.matchResults);
+  addMissing(value.serviceRequests as Record<string, unknown>[], synced.serviceRequests);
+  return value;
 }
 
 const StoreContext = createContext<{ state: DomainState; dispatch: React.Dispatch<DomainAction>; reset: () => void; hydrationNotice?: string } | null>(null);
@@ -134,7 +192,7 @@ const StoreContext = createContext<{ state: DomainState; dispatch: React.Dispatc
 export function DomainProvider({ children }: PropsWithChildren) {
   const [hydration] = useState(hydratePersistedState);
   const [state, dispatch] = useReducer(domainReducer, hydration.state);
-  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }, [state]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); writeInquirySyncCookie(state); }, [state]);
   const reset = () => dispatch({ type: 'resetDemo' });
   return <StoreContext.Provider value={{ state, dispatch, reset, hydrationNotice: hydration.notice }}>{children}</StoreContext.Provider>;
 }

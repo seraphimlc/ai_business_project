@@ -351,4 +351,45 @@ describe('authoritative local reducer', () => {
     expect(assigned.serviceRequests.find((s) => s.id === 'service-request-logistics')?.status).toBe('已承接');
     expect(assigned.serviceRequests.find((s) => s.id === 'service-request-logistics')?.providerId).toBe('org-provider-logistics');
   });
+
+  it('lets a customer submit an inquiry that enters the seller pipeline', () => {
+    const customer: Actor = { userId: 'user-buyer', organizationId: 'org-enterprise-wenzhou', projectIds: ['project-wenzhou'], role: 'customer' };
+    const result = apply({ type: 'customerSubmitInquiry', actor: customer, inquiryId: 'inquiry-buyer-new', summary: 'Need 50 pallet racks with casters', images: ['photo-rack-1.jpg'], idempotencyKey: 'buyer-inquiry-1' });
+    const inquiry = result.inquiries.find((item) => item.id === 'inquiry-buyer-new');
+    expect(inquiry?.customerId).toBe('party-buyer');
+    expect(inquiry?.status).toBe('待确认');
+    expect(result.sceneRuns.find((item) => item.targetObject.type === 'Inquiry' && item.targetObject.id === 'inquiry-buyer-new')?.sourceEndpoint).toBe('H5');
+    expect(result.matchResults.some((item) => item.inquiryId === 'inquiry-buyer-new')).toBe(true);
+    expect(result.serviceRequests.some((item) => item.inquiryId === 'inquiry-buyer-new')).toBe(true);
+    expect(result.tasks.some((item) => item.title === '确认询价需求' && item.assigneeId === 'user-enterprise-owner')).toBe(true);
+    expect(result.auditLogs.some((item) => item.action === 'inquiry.submitted')).toBe(true);
+    const twice = apply({ type: 'customerSubmitInquiry', actor: customer, inquiryId: 'inquiry-buyer-new', summary: 'duplicate', idempotencyKey: 'buyer-inquiry-1' }, result);
+    expect(twice.inquiries.filter((item) => item.id === 'inquiry-buyer-new')).toHaveLength(1);
+  });
+
+  it('rejects a customer inquiry without a linked buyer party', () => {
+    const noPartyUser = { ...demoState.users[0], id: 'user-customer-noparty', name: '无主体客户', roleId: 'role-customer', partyCompanyId: undefined };
+    const noPartyMembership = { ...demoState.projectMemberships[0], id: 'membership-noparty', userId: 'user-customer-noparty', roleId: 'role-customer' };
+    const state = { ...demoState, users: [...demoState.users, noPartyUser], projectMemberships: [...demoState.projectMemberships, noPartyMembership] };
+    const impostor: Actor = { userId: 'user-customer-noparty', organizationId: 'org-enterprise-wenzhou', projectIds: ['project-wenzhou'], role: 'customer' };
+    expect(() => apply({ type: 'customerSubmitInquiry', actor: impostor, inquiryId: 'inquiry-impostor', summary: 'x', idempotencyKey: 'impostor-1' }, state)).toThrowError('CUSTOMER_PROFILE_MISSING');
+  });
+
+  it('lets the customer walk quotation feedback but only on their own inquiry', () => {
+    const customer: Actor = { userId: 'user-buyer', organizationId: 'org-enterprise-wenzhou', projectIds: ['project-wenzhou'], role: 'customer' };
+    const viewed = apply({ type: 'quotationFeedback', actor: customer, quotationId: 'quotation-demo', feedback: 'viewed', idempotencyKey: 'buyer-view-1' });
+    expect(viewed.quotations.find((item) => item.id === 'quotation-demo')?.status).toBe('客户已查看');
+    const accepted = apply({ type: 'quotationFeedback', actor: customer, quotationId: 'quotation-demo', feedback: 'accepted', idempotencyKey: 'buyer-accept-1' }, viewed);
+    expect(accepted.quotations.find((item) => item.id === 'quotation-demo')?.status).toBe('已接受');
+    expect(accepted.opportunities.some((item) => item.quotationId === 'quotation-demo')).toBe(true);
+    expect(accepted.tasks.some((item) => item.title === '确认是否创建订单' && item.assigneeId === 'user-enterprise-owner')).toBe(true);
+    expect(accepted.notifications.some((item) => item.recipientId === 'user-enterprise-owner' && item.title.includes('已接受'))).toBe(true);
+  });
+
+  it('denies customer feedback on quotations from other customers', () => {
+    const customer: Actor = { userId: 'user-buyer', organizationId: 'org-enterprise-wenzhou', projectIds: ['project-wenzhou'], role: 'customer' };
+    const otherQuotation = { ...demoState.quotations[0], id: 'quotation-other', inquiryId: 'inquiry-logistics', status: '已发送' as const };
+    const state = { ...demoState, quotations: [...demoState.quotations, otherQuotation] };
+    expect(() => apply({ type: 'quotationFeedback', actor: customer, quotationId: 'quotation-other', feedback: 'viewed', idempotencyKey: 'buyer-other-1' }, state)).toThrowError('CUSTOMER_SCOPE_DENIED');
+  });
 });

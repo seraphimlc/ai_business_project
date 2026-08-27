@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { hydratePersistedState, STORAGE_KEY } from '../domain/store';
+import { hydratePersistedState, STORAGE_KEY, writeInquirySyncCookie, INQUIRY_SYNC_COOKIE } from '../domain/store';
+import { demoState } from '../domain/fixtures';
+import { domainReducer } from '../domain/reducer';
+import type { Actor } from '../domain/types';
+
+const customer: Actor = { userId: 'user-buyer', organizationId: 'org-enterprise-wenzhou', projectIds: ['project-wenzhou'], role: 'customer' };
 
 describe('local demo persistence', () => {
   it('falls back to fixtures and exposes a non-blocking reset notice for corrupt state', () => {
@@ -13,6 +18,16 @@ describe('local demo persistence', () => {
     const valid = hydratePersistedState();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(valid.state));
     expect(hydratePersistedState().notice).toBeUndefined();
+  });
+
+  it('merges an H5-submitted inquiry from the shared cookie into a fresh state', () => {
+    const state = domainReducer(demoState, { type: 'customerSubmitInquiry', actor: customer, inquiryId: 'inquiry-h5-test', summary: '同步测试询价', images: ['a.jpg'], idempotencyKey: 'sync-test-1' });
+    expect(() => writeInquirySyncCookie(state)).not.toThrow();
+    document.cookie = `${INQUIRY_SYNC_COOKIE}=${encodeURIComponent(JSON.stringify({ inquiries: state.inquiries.filter((i) => i.customerId === 'party-buyer'), sceneRuns: state.sceneRuns, matchResults: state.matchResults, serviceRequests: state.serviceRequests }))}`;
+    const hydrated = hydratePersistedState();
+    expect(hydrated.notice).toBeUndefined();
+    expect(hydrated.state.inquiries.some((item) => item.id === 'inquiry-h5-test')).toBe(true);
+    expect(hydrated.state.serviceRequests.some((item) => item.id === 'service-request-inquiry-h5-test')).toBe(true);
   });
 
   it('rejects malformed records, duplicate IDs, invalid statuses, and broken relationships', () => {

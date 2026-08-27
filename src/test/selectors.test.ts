@@ -11,7 +11,7 @@ describe('pure state selectors', () => {
   it('derives dashboard counts and distinct product progress', () => {
     const summary = selectDashboardSummary(demoState, owner);
     expect(summary.pendingTasks).toBeGreaterThan(0);
-    expect(summary.openRisks).toBe(1);
+    expect(summary.openRisks).toBe(2);
     const progress = selectObjectProgress(demoState, 'Product', 'product-demo', owner);
     expect(progress.lifecycle).toBe('草稿');
     expect(progress.content).toBe('待确认');
@@ -22,7 +22,7 @@ describe('pure state selectors', () => {
   it('limits provider records to assigned work', () => {
     const visible = selectRoleVisibleRecords(demoState, provider);
     expect(visible.products).toHaveLength(0);
-    expect(visible.complianceCases).toHaveLength(1);
+    expect(visible.complianceCases).toHaveLength(2);
     expect(visible.tasks.every((item) => item.assigneeId === provider.userId)).toBe(true);
   });
 

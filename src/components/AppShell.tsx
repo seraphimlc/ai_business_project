@@ -1,10 +1,14 @@
 import type { PropsWithChildren } from 'react';
 
-const nav = [['/','场景中心','从业务目标开始'], ['/tasks','我的工作','确认、跟进和风险'], ['/data','业务数据','商品、客户与订单'], ['/analytics','经营分析','看趋势与结果'], ['/catalog','场景目录','42 + 12 个场景'], ['/architecture/product','产品架构','用户如何工作'], ['/architecture/system','系统架构','技术如何支撑']] as const;
-const adminNav = [['/admin','运营总览','企业、服务商与模式'], ['/admin/enterprises','企业管理','入驻审核与经营进度'], ['/admin/providers','服务商管理','供给能力与评级'], ['/admin/projects','项目场景配置','按地区与模式组合'], ['/admin/services','服务需求池','受理与分配服务'], ['/admin/data','运营数据','跨企业数据与风险']] as const;
+const nav = [['/', '工作台'], ['/product', '商品管理'], ['/leads', '客户与线索'], ['/quotation', '询价与报价'], ['/compliance', '合规处理'], ['/order', '订单与履约'], ['/lkb', 'AI 内容工作台']] as const;
 
 export function AppShell({ children, route, navigate, onReset }: PropsWithChildren<{ route: string; navigate: (route: string) => void; onReset: () => void }>) {
-  const isAdmin = route.startsWith('/admin');
-  const activeNav = isAdmin ? adminNav : nav;
-  return <div className="app-frame"><aside className="sidebar"><div className="brand-mark"><span>CB</span><div><strong>跨境业务</strong><small>场景运营系统</small></div></div><button type="button" className="workspace-select" onClick={() => navigate(isAdmin ? '/' : '/admin')}><span>当前工作区</span><strong>{isAdmin ? '跨境场景平台' : '温州智造企业'}</strong><small>{isAdmin ? '平台运营工作区 · 双项目⌄' : '企业工作区 · 温州项目⌄'}</small></button><nav aria-label="主导航">{activeNav.map(([href, label, detail]) => <button type="button" className={route === href ? 'nav-item is-active' : 'nav-item'} key={href} onClick={() => navigate(href)}><span className="nav-icon">{href === '/' ? '⌂' : href === '/admin' ? '◈' : href === '/tasks' ? '✓' : href === '/data' ? '▦' : href === '/analytics' ? '◒' : href === '/admin/enterprises' ? '▣' : href === '/admin/providers' ? '◎' : href === '/admin/projects' ? '✦' : href === '/admin/services' ? '◎' : '✦'}</span><span><strong>{label}</strong><small>{detail}</small></span></button>)}</nav><div className="sidebar-bottom"><button className="mini-link" type="button" onClick={() => navigate('/mini-program')}><span>▣</span><span><strong>小程序预览</strong><small>移动端接续工作</small></span></button><button className="reset-link" type="button" onClick={onReset}>↺ 重置演示数据</button></div></aside><div className="main-shell"><header className="topbar"><div className="mobile-brand">跨境业务 <span>/ 场景运营</span></div><div className="topbar-tools"><button className="icon-button" type="button" aria-label="查看通知">◇<b>2</b></button><span className="topbar-divider" /><div className="user-chip">{isAdmin ? <span>赵</span> : <span>林</span>}<div><strong>{isAdmin ? '赵平台运营' : '林负责人'}</strong><small>{isAdmin ? '平台运营人员' : '企业负责人'}</small></div></div></div></header><main className="main-content">{children}</main></div></div>;
+  return <div className="app-flush">
+    <div className="app-bar">
+      <span className="app-brand">跨境业务 · 入驻企业</span>
+      <nav className="app-bar-nav">{nav.map(([href, label]) => <button key={href} className={route === href || (href !== '/' && route.startsWith(`${href}/`)) ? 'is-active' : ''} onClick={() => navigate(href)}>{label}</button>)}</nav>
+      <span className="app-bar-right"><a href="https://h5.visitworld.me" target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>H5 档口业主端 ↗</a><span className="app-bar-divider" /><span>林负责人</span><button className="app-bar-reset" onClick={onReset}>重置演示</button></span>
+    </div>
+    <main className={route === '/lkb' ? 'main-content-flush' : 'main-content-app'}>{children}</main>
+  </div>;
 }

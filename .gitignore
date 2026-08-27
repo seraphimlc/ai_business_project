@@ -5,3 +5,4 @@ dist/
 .agents/
 .superpowers/
 work/
+vite.log

@@ -91,3 +91,36 @@ h1 { font: 4rem/1.05 var(--font-display); letter-spacing: -0.04em; margin: 0; ma
 .quick-links button { font-size: 0.74rem; min-height: 36px; padding: 0.45rem 0.9rem; }
 @media (max-width: 1100px) { .mode-grid { grid-template-columns: repeat(2, 1fr); }.domain-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 760px) { .admin-table { overflow-x: auto; }.admin-table-head, .admin-table-row { min-width: 820px; }.mode-grid, .domain-grid { grid-template-columns: 1fr 1fr; } }
+/* AI 内容工作台：全屏功能页，无外层壳 */
+.main-content-flush { height: calc(100vh - 70px); max-width: none; overflow: hidden; padding: 0; }
+.main-content-flush > iframe { display: block; height: 100%; width: 100%; }
+/* ===== 无壳应用形态：去掉侧边栏与顶栏，极简应用条 ===== */
+.app-flush { display: flex; flex-direction: column; min-height: 100vh; }
+.app-bar { align-items: center; background: var(--navy); color: #f5f4ed; display: flex; gap: 1.1rem; height: 48px; padding: 0 1.4rem; position: sticky; top: 0; z-index: 20; }
+.app-brand { font: 0.98rem var(--font-display); letter-spacing: 0.01em; white-space: nowrap; }
+.app-bar-nav { align-items: center; display: flex; gap: 0.15rem; overflow-x: auto; }
+.app-bar-nav button { background: transparent; border-radius: 8px; color: rgb(245 244 237 / 0.72); font-size: 0.82rem; padding: 0.38rem 0.65rem; white-space: nowrap; }
+.app-bar-nav button:hover { background: rgb(214 233 242 / 0.1); filter: none; }
+.app-bar-nav button.is-active { background: rgb(214 233 242 / 0.16); color: #fff; }
+.app-bar-right { align-items: center; color: rgb(245 244 237 / 0.62); display: flex; font-size: 0.75rem; gap: 0.8rem; margin-left: auto; white-space: nowrap; }
+.app-bar-divider { background: rgb(245 244 237 / 0.18); height: 1.1rem; width: 1px; }
+.app-bar-reset { background: transparent; color: rgb(245 244 237 / 0.62); font-size: 0.72rem; padding: 0.2rem 0.3rem; }
+.app-bar-reset:hover { color: #fff; filter: none; }
+.main-content-app { margin: 0 auto; max-width: 1500px; padding: 2.4rem 2.6rem 3rem; width: 100%; }
+.main-content-flush { height: calc(100vh - 48px); max-width: none; overflow: hidden; padding: 0; }
+.main-content-flush > iframe { display: block; height: 100%; width: 100%; }
+@media (max-width: 1100px) { .main-content-app { padding: 1.6rem 1.2rem 2.4rem; } .app-bar { gap: 0.7rem; padding-inline: 0.9rem; } }
+/* 纯功能页：去掉主线介绍壳，只留中间业务内容 */
+.flow-simple { background: var(--paper); border: 1px solid var(--line); }
+.flow-simple-bar { align-items: center; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; padding: 1.1rem 1.4rem; }
+.flow-simple-bar h2 { font: 1.35rem var(--font-display); margin: 0; }
+.flow-simple-body { align-items: flex-start; display: flex; gap: 1.6rem; padding: 1.4rem; }
+.flow-simple-facts { display: grid; flex: 1; gap: 0; }
+.flow-simple-facts p { border-top: 1px solid var(--line); display: flex; gap: 1rem; justify-content: space-between; margin: 0; padding: 0.9rem 0.2rem; }
+.flow-simple-facts b { color: var(--ink); font-size: 0.8rem; }
+.flow-simple-facts span { color: var(--muted); font-size: 0.85rem; }
+.flow-simple-action { align-items: flex-start; display: flex; flex-direction: column; gap: 0.6rem; min-width: 240px; }
+.flow-simple-action button { min-height: 46px; width: 100%; }
+.flow-simple-action button:disabled { background: var(--line); cursor: default; filter: none; }
+.flow-simple-action .admin-footnote { margin: 0; }
+@media (max-width: 760px) { .flow-simple-body { flex-direction: column; } .flow-simple-action { min-width: 0; width: 100%; } }

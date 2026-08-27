@@ -1,6 +1,6 @@
 import { createInitialState } from './fixtures';
 import { isActionAuthorized, resolveActor, verifyActor, type VerifiedActor } from './permissions';
-import type { Actor, AuditLog, CandidateResult, DomainAction, DomainState, ObjectType, Product, ScopedRecord, Task } from './types';
+import type { Actor, AuditLog, CandidateResult, DomainAction, DomainState, Inquiry, ObjectType, Product, ScopedRecord, Task } from './types';
 
 export class DomainError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -313,17 +313,33 @@ function quotationFeedback(state: DomainState, action: Extract<DomainAction, { t
   assertCanOperate(actor);
   if (hasAudit(state, action.idempotencyKey)) return state;
   const quotation = findScoped(state.quotations, action.quotationId, actor);
+  if (actor.role === 'customer') {
+    const buyerPartyId = state.users.find((user) => user.id === actor.userId)?.partyCompanyId;
+    const inquiry = state.inquiries.find((item) => item.id === quotation.inquiryId);
+    if (!buyerPartyId || !inquiry || inquiry.customerId !== buyerPartyId) fail('CUSTOMER_SCOPE_DENIED', '客户只能反馈自己询价产生的报价');
+    if (!['已发送', '客户已查看', '议价中'].includes(quotation.status)) fail('INVALID_TRANSITION', '报价当前不可由客户反馈');
+  }
   const before = quotation.status;
   const allowed: Record<Extract<DomainAction, { type: 'quotationFeedback' }>['feedback'], string[]> = { viewed: ['已发送'], negotiating: ['客户已查看'], accepted: ['客户已查看', '议价中'], rejected: ['已发送', '客户已查看', '议价中'] };
   if (!allowed[action.feedback].includes(quotation.status)) fail('INVALID_TRANSITION', `报价不能从${quotation.status}接收${action.feedback}`);
   quotation.status = ({ viewed: '客户已查看', negotiating: '议价中', accepted: '已接受', rejected: '已拒绝' } as const)[action.feedback];
   state.quotationFeedbacks.push({ id: `quotation-feedback-${state.quotationFeedbacks.length + 1}`, organizationId: quotation.organizationId, projectId: quotation.projectId, createdAt: now, updatedAt: now, quotationId: quotation.id, feedback: action.feedback });
-  if (action.feedback === 'negotiating') addTask(state, actor, { title: '跟进客户报价反馈', kind: 'follow_up', objectType: 'Quotation', objectId: quotation.id, assigneeId: actor.userId, idempotencyKey: `quotation-follow-up-${quotation.id}` }, quotation);
-  if (action.feedback === 'accepted') {
-    if (!state.opportunities.some((item) => item.quotationId === quotation.id)) state.opportunities.push({ id: `opportunity-${state.opportunities.length + 1}`, organizationId: quotation.organizationId, projectId: quotation.projectId, createdAt: now, updatedAt: now, quotationId: quotation.id, name: '已接受报价商机', ownerId: actor.userId, status: '新建' });
-    addTask(state, actor, { title: '确认是否创建订单', kind: 'confirmation', objectType: 'Quotation', objectId: quotation.id, assigneeId: actor.userId, idempotencyKey: `quotation-order-next-${quotation.id}` }, quotation);
+  // 客户反馈产生的商家侧任务和通知不挂在客户名下。
+  const sellerAssignee = actor.role === 'customer' ? 'user-enterprise-owner' : actor.userId;
+  const notifySeller = (title: string) => {
+    state.notifications.push({ id: `notification-${state.notifications.length + 1}`, organizationId: quotation.organizationId, projectId: quotation.projectId, createdAt: now, updatedAt: now, recipientId: sellerAssignee, title, status: '已发送', idempotencyKey: `feedback-notify-${action.idempotencyKey}` });
+  };
+  if (action.feedback === 'negotiating') {
+    addTask(state, actor, { title: '跟进客户报价反馈', kind: 'follow_up', objectType: 'Quotation', objectId: quotation.id, assigneeId: sellerAssignee, idempotencyKey: `quotation-follow-up-${quotation.id}` }, quotation);
+    notifySeller(`客户希望议价${action.targetAmount ? `，目标价 ${action.targetAmount}` : ''}，请跟进`);
   }
-  appendAudit(state, actor, `quotation.${action.feedback}`, 'Quotation', quotation.id, { status: before }, { status: quotation.status }, action.idempotencyKey);
+  if (action.feedback === 'accepted') {
+    if (!state.opportunities.some((item) => item.quotationId === quotation.id)) state.opportunities.push({ id: `opportunity-${state.opportunities.length + 1}`, organizationId: quotation.organizationId, projectId: quotation.projectId, createdAt: now, updatedAt: now, quotationId: quotation.id, name: '已接受报价商机', ownerId: sellerAssignee, status: '新建' });
+    addTask(state, actor, { title: '确认是否创建订单', kind: 'confirmation', objectType: 'Quotation', objectId: quotation.id, assigneeId: sellerAssignee, idempotencyKey: `quotation-order-next-${quotation.id}` }, quotation);
+    notifySeller('客户已接受报价，请确认是否创建订单');
+  }
+  if (action.feedback === 'rejected') notifySeller('客户已拒绝报价');
+  appendAudit(state, actor, `quotation.${action.feedback}`, 'Quotation', quotation.id, { status: before }, { status: quotation.status, comment: action.comment }, action.idempotencyKey);
   return state;
 }
 
@@ -487,6 +503,64 @@ export function domainReducer(current: DomainState, action: DomainAction): Domai
       const product: Product = { id: trusted.productId, organizationId: actor.organizationId, projectId: actor.projectIds[0], createdAt: now, updatedAt: now, name: trusted.name, description: '', ownerId: actor.userId, status: '草稿', currentVersion: 1 };
       state.products.push(product); appendAudit(state, actor, 'product.created', 'Product', product.id, undefined, { status: product.status }); return state;
     }
+    case 'updateProductDraft': {
+      assertCanOperate(actor);
+      if (hasAudit(state, trusted.idempotencyKey)) return state;
+      const product = findScoped(state.products, trusted.productId, actor);
+      if (!['草稿', '待完善'].includes(product.status)) fail('INVALID_TRANSITION', '只有草稿或待完善商品可以直接编辑');
+      const allowedFields = ['name', 'description', 'price', 'unit', 'category'] as const;
+      const before: Record<string, unknown> = {};
+      for (const key of allowedFields) {
+        const value = trusted.fields[key];
+        if (value === undefined) continue;
+        before[key] = product[key];
+        (product as unknown as Record<string, unknown>)[key] = value;
+      }
+      product.updatedAt = now;
+      if (product.status === '草稿') product.status = '待完善';
+      appendAudit(state, actor, 'product.draft-updated', 'Product', product.id, before, { ...trusted.fields }, trusted.idempotencyKey, product);
+      return state;
+    }
+    case 'uploadProductAsset': {
+      assertCanOperate(actor);
+      const product = findScoped(state.products, trusted.productId, actor);
+      if (hasAudit(state, trusted.idempotencyKey)) return state;
+      if (state.files.some((item) => item.id === trusted.fileId) || state.productAssets.some((item) => item.id === trusted.assetId)) fail('IDEMPOTENCY_CONFLICT', '素材或文件编号已存在');
+      state.files.push({ id: trusted.fileId, organizationId: product.organizationId, projectId: product.projectId, createdAt: now, updatedAt: now, name: trusted.name, status: '可用' });
+      state.productAssets.push({ id: trusted.assetId, organizationId: product.organizationId, projectId: product.projectId, createdAt: now, updatedAt: now, productId: product.id, kind: trusted.kind, fileAssetId: trusted.fileId, status: '已确认' });
+      appendAudit(state, actor, 'product.asset-uploaded', 'ProductAsset', trusted.assetId, undefined, { productId: product.id, kind: trusted.kind, name: trusted.name }, trusted.idempotencyKey, product);
+      return state;
+    }
+    case 'publishProduct': {
+      assertCanOperate(actor);
+      if (hasAudit(state, trusted.idempotencyKey)) return state;
+      const product = findScoped(state.products, trusted.productId, actor);
+      if (product.status === '已停用') fail('INVALID_TRANSITION', '已停用商品不能发布');
+      const channel = trusted.channel ?? '跨境商城';
+      const existing = state.channelListings.find((item) => item.productId === product.id && item.channel === channel);
+      if (!existing) {
+        state.channelListings.push({ id: `listing-${product.id}-${channel}`, organizationId: product.organizationId, projectId: product.projectId, createdAt: now, updatedAt: now, productId: product.id, channel, status: '已发布' });
+      }
+      const blocked = productComplianceBlocked(state, product.id);
+      product.status = blocked ? '需整改' : '可经营';
+      product.updatedAt = now;
+      const publishTask = state.tasks.find((item) => item.objectType === 'Product' && item.objectId === product.id && item.kind === 'publish' && item.assigneeId === actor.userId && item.status !== '已完成');
+      if (publishTask) { publishTask.status = '已完成'; publishTask.updatedAt = now; }
+      appendAudit(state, actor, 'product.published', 'ChannelListing', existing?.id ?? `listing-${product.id}-${channel}`, { status: product.status }, { channel, published: true }, trusted.idempotencyKey, product);
+      return state;
+    }
+    case 'processProductContent': {
+      assertCanOperate(actor);
+      const product = findScoped(state.products, trusted.productId, actor);
+      if (product.status !== '待完善') fail('INVALID_TRANSITION', '只有待完善商品可以提交内容处理');
+      if (hasAudit(state, trusted.idempotencyKey)) return state;
+      if (state.sceneRuns.some((item) => item.id === trusted.sceneRunId) || state.candidates.some((item) => item.id === trusted.candidateId)) fail('IDEMPOTENCY_CONFLICT', '场景或候选编号已存在');
+      state.sceneRuns.push({ id: trusted.sceneRunId, organizationId: product.organizationId, projectId: product.projectId, createdAt: now, updatedAt: now, sceneType: 'product-content', initiatedBy: actor.userId, targetObject: { type: 'Product', id: product.id }, status: '待确认', sourceEndpoint: 'H5' });
+      state.candidates.push({ id: trusted.candidateId, organizationId: product.organizationId, projectId: product.projectId, createdAt: now, updatedAt: now, sceneRunId: trusted.sceneRunId, targetObject: { type: 'Product', id: product.id }, sourceVersion: trusted.sourceVersion, candidateVersion: 1, payload: trusted.payload, sourcePayload: structuredClone(trusted.payload), fieldMapping: Object.fromEntries(Object.keys(trusted.payload).map((key) => [key, key])), status: '待确认', idempotencyKey: trusted.idempotencyKey });
+      addTask(state, actor, { title: '确认商品内容候选', kind: 'confirmation', objectType: 'Product', objectId: product.id, assigneeId: actor.userId, idempotencyKey: `confirm-${trusted.candidateId}` }, product);
+      appendAudit(state, actor, 'product.content-processed', 'SceneRun', trusted.sceneRunId, { status: '处理中' }, { status: '待确认' }, trusted.idempotencyKey, product);
+      return state;
+    }
     case 'startScene': {
       assertCanOperate(actor); const target = findScoped(recordsFor(state, trusted.targetObject.type), trusted.targetObject.id, actor);
       if (state.sceneRuns.some((item) => item.id === trusted.sceneRunId)) fail('IDEMPOTENCY_CONFLICT', '场景处理记录已存在');
@@ -556,6 +630,24 @@ export function domainReducer(current: DomainState, action: DomainAction): Domai
       if (!provider) return fail('PROVIDER_NOT_FOUND', '服务商不存在或未启用');
       request.providerId = provider.id; request.status = '已承接'; request.updatedAt = now;
       appendAudit(state, actor, 'service-request.assigned', 'ServiceRequest', request.id, undefined, { providerId: provider.id, status: request.status }, trusted.idempotencyKey, request);
+      return state;
+    }
+    case 'customerSubmitInquiry': {
+      const partyCompanyId = state.users.find((user) => user.id === actor.userId)?.partyCompanyId ?? fail('CUSTOMER_PROFILE_MISSING', '客户账号缺少关联的企业主体');
+      if (hasAudit(state, trusted.idempotencyKey)) return state;
+      if (state.inquiries.some((item) => item.id === trusted.inquiryId)) fail('IDEMPOTENCY_CONFLICT', '询价编号已存在');
+      const summary = trusted.summary.trim();
+      if (!summary) fail('INQUIRY_SUMMARY_REQUIRED', '询价需求不能为空');
+      const projectId = actor.projectIds[0];
+      if (!projectId) fail('ACTOR_SCOPE_INVALID', '客户缺少有效项目范围');
+      const inquiry: Inquiry = { id: trusted.inquiryId, organizationId: actor.organizationId, projectId, createdAt: now, updatedAt: now, customerId: partyCompanyId, summary, images: trusted.images ?? [], status: '待确认' };
+      state.inquiries.push(inquiry);
+      state.sceneRuns.push({ id: `scene-${trusted.inquiryId}`, organizationId: actor.organizationId, projectId, createdAt: now, updatedAt: now, sceneType: 'inquiry', initiatedBy: actor.userId, targetObject: { type: 'Inquiry', id: inquiry.id }, status: '待确认', sourceEndpoint: 'H5' });
+      state.matchResults.push({ id: `match-${trusted.inquiryId}`, organizationId: actor.organizationId, projectId, createdAt: now, updatedAt: now, inquiryId: inquiry.id, status: '处理中' });
+      state.serviceRequests.push({ id: `service-request-${trusted.inquiryId}`, organizationId: actor.organizationId, projectId, createdAt: now, updatedAt: now, inquiryId: inquiry.id, status: '待受理' });
+      addTask(state, actor, { title: '确认询价需求', kind: 'confirmation', objectType: 'Inquiry', objectId: inquiry.id, assigneeId: 'user-enterprise-owner', idempotencyKey: `inquiry-confirm-${inquiry.id}` }, inquiry);
+      state.notifications.push({ id: `notification-${state.notifications.length + 1}`, organizationId: actor.organizationId, projectId, createdAt: now, updatedAt: now, recipientId: 'user-product-operator', title: '收到新的客户询价', status: '已发送', idempotencyKey: `inquiry-received-${inquiry.id}` });
+      appendAudit(state, actor, 'inquiry.submitted', 'Inquiry', inquiry.id, undefined, { summary: inquiry.summary, status: inquiry.status, images: inquiry.images }, trusted.idempotencyKey, inquiry);
       return state;
     }
     default: return fail('ACTION_UNSUPPORTED', '不支持的领域动作');
