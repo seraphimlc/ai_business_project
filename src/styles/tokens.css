@@ -1,0 +1,28 @@
+:root {
+  color-scheme: light;
+  --canvas: #f4f0e8;
+  --paper: #fffdf8;
+  --ink: #17212b;
+  --muted: #6c747a;
+  --line: #d8d3c8;
+  --blue: #155e9b;
+  --green: #2d7658;
+  --amber: #a96918;
+  --red: #b24c3d;
+  --space-1: 0.5rem;
+  --space-2: 0.75rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2.5rem;
+  --radius-sm: 0.35rem;
+  --radius-md: 0.75rem;
+  --shadow-paper: 0 1rem 3rem rgb(23 33 43 / 0.08);
+  --shadow-lift: 0 1.25rem 2.5rem rgb(23 33 43 / 0.12);
+  --navy: #122334;
+  --cream: #f7f3eb;
+  --blue-soft: #e6eff6;
+  --line-dark: #bfc5c4;
+  --font-mono: 'SFMono-Regular', Consolas, monospace;
+  --font-display: Georgia, 'Times New Roman', serif;
+  --font-body: 'Avenir Next', 'Helvetica Neue', sans-serif;
+}
