@@ -322,11 +322,33 @@ describe('authoritative local reducer', () => {
   });
 
   it('keeps platform-generated work in the target enterprise scope', () => {
-    const platform: Actor = { userId: 'user-platform-operator', organizationId: 'org-platform', projectIds: ['project-wenzhou'], role: 'platform_operator' };
+    const platform: Actor = { userId: 'user-platform-operator', organizationId: 'org-platform', projectIds: ['project-wenzhou', 'project-nanjing'], role: 'platform_operator' };
     const state = apply({ type: 'confirmCandidate', actor: platform, candidateId: 'candidate-product-description', idempotencyKey: 'platform-confirm-scope' }, compliantState);
     const task = state.tasks.find((item) => item.idempotencyKey === 'publish-product-product-demo');
     const audit = state.auditLogs.find((item) => item.idempotencyKey === 'platform-confirm-scope');
     expect(task?.organizationId).toBe('org-enterprise-wenzhou');
     expect(audit?.organizationId).toBe('org-enterprise-wenzhou');
+  });
+
+  it('approves and rejects enterprise admission as the platform operator', () => {
+    const platform: Actor = { userId: 'user-platform-operator', organizationId: 'org-platform', projectIds: ['project-wenzhou', 'project-nanjing'], role: 'platform_operator' };
+    const approved = apply({ type: 'approveEnterpriseAdmission', actor: platform, organizationId: 'org-enterprise-ningbo', idempotencyKey: 'admission-1' });
+    expect(approved.organizations.find((o) => o.id === 'org-enterprise-ningbo')?.status).toBe('启用');
+    expect(approved.partyCompanies.find((p) => p.organizationId === 'org-enterprise-ningbo')?.status).toBe('有效');
+    expect(() => apply({ type: 'approveEnterpriseAdmission', actor: platform, organizationId: 'org-enterprise-ningbo', idempotencyKey: 'admission-2' }, approved)).toThrowError('INVALID_TRANSITION');
+    const rejected = apply({ type: 'rejectEnterpriseAdmission', actor: platform, organizationId: 'org-enterprise-ningbo', reason: '材料不齐' });
+    expect(rejected.organizations.find((o) => o.id === 'org-enterprise-ningbo')?.status).toBe('停用');
+    expect(() => apply({ type: 'approveEnterpriseAdmission', actor: enterpriseOwner, organizationId: 'org-enterprise-ningbo', idempotencyKey: 'admission-3' })).toThrowError('ROLE_ACTION_DENIED');
+  });
+
+  it('toggles project domain configuration and assigns service requests', () => {
+    const platform: Actor = { userId: 'user-platform-operator', organizationId: 'org-platform', projectIds: ['project-wenzhou', 'project-nanjing'], role: 'platform_operator' };
+    const toggled = apply({ type: 'toggleProjectDomain', actor: platform, projectId: 'project-nanjing', domain: '订单与供应链', idempotencyKey: 'toggle-1' });
+    expect(toggled.platformProjects.find((p) => p.id === 'project-nanjing')?.enabledDomains).toContain('订单与供应链');
+    const toggledBack = apply({ type: 'toggleProjectDomain', actor: platform, projectId: 'project-nanjing', domain: '订单与供应链', idempotencyKey: 'toggle-2' }, toggled);
+    expect(toggledBack.platformProjects.find((p) => p.id === 'project-nanjing')?.enabledDomains).not.toContain('订单与供应链');
+    const assigned = apply({ type: 'assignServiceRequest', actor: platform, serviceRequestId: 'service-request-logistics', providerId: 'org-provider-logistics', idempotencyKey: 'assign-1' });
+    expect(assigned.serviceRequests.find((s) => s.id === 'service-request-logistics')?.status).toBe('已承接');
+    expect(assigned.serviceRequests.find((s) => s.id === 'service-request-logistics')?.providerId).toBe('org-provider-logistics');
   });
 });

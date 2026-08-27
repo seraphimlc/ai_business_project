@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { demoState } from '../domain/fixtures';
-import { selectDashboardSummary, selectObjectProgress, selectRoleVisibleRecords, selectTimeline } from '../domain/selectors';
+import { selectDashboardSummary, selectEnterpriseRows, selectModeVolume, selectObjectProgress, selectPlatformOverview, selectProjectRows, selectProviderRows, selectRoleVisibleRecords, selectServiceQueue, selectTimeline } from '../domain/selectors';
 import type { Actor } from '../domain/types';
 
 const owner: Actor = { userId: 'user-enterprise-owner', organizationId: 'org-enterprise-wenzhou', projectIds: ['project-wenzhou'], role: 'enterprise_owner' };
 const provider: Actor = { userId: 'user-provider', organizationId: 'org-service-provider', projectIds: ['project-wenzhou'], role: 'service_provider' };
+const platform: Actor = { userId: 'user-platform-operator', organizationId: 'org-platform', projectIds: ['project-wenzhou', 'project-nanjing'], role: 'platform_operator' };
 
 describe('pure state selectors', () => {
   it('derives dashboard counts and distinct product progress', () => {
@@ -44,5 +45,36 @@ describe('pure state selectors', () => {
     expect(forged.products).toHaveLength(0);
     const disabled = selectRoleVisibleRecords(demoState, { ...owner, userId: 'user-disabled' });
     expect(disabled.products).toHaveLength(0);
+  });
+
+  it('derives platform overview only for the platform operator', () => {
+    const overview = selectPlatformOverview(demoState, platform);
+    expect(overview.enterprises).toBe(2);
+    expect(overview.admissions).toBe(1);
+    expect(overview.providers).toBe(2);
+    expect(overview.pendingServices).toBeGreaterThan(0);
+    expect(overview.projects).toBe(2);
+    expect(overview.modes).toEqual(expect.arrayContaining(['9810', '9710', '1039']));
+    expect(selectPlatformOverview(demoState, owner).enterprises).toBe(0);
+  });
+
+  it('lists platform enterprise rows with per-organization counts', () => {
+    const rows = selectEnterpriseRows(demoState, platform);
+    const ningbo = rows.find((row) => row.id === 'org-enterprise-ningbo');
+    expect(rows).toHaveLength(3);
+    expect(ningbo?.status).toBe('待审核');
+    expect(ningbo?.products).toBe(1);
+    expect(ningbo?.orders).toBe(1);
+  });
+
+  it('lists provider and project rows for the platform operator', () => {
+    const providers = selectProviderRows(demoState, platform);
+    expect(providers).toHaveLength(2);
+    const projects = selectProjectRows(demoState, platform);
+    expect(projects.find((p) => p.id === 'project-nanjing')?.modes).toContain('9810');
+    const queue = selectServiceQueue(demoState, platform);
+    expect(queue.length).toBeGreaterThan(0);
+    const volumes = selectModeVolume(demoState, platform);
+    expect(volumes.map((v) => v.mode)).toEqual(expect.arrayContaining(['9810', '9710', '1039']));
   });
 });

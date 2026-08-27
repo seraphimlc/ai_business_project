@@ -1,7 +1,7 @@
 import type {
   AuditLog, CandidateResult, ChannelListing, ComplianceCase, Contact, CustomerProfile, CustomerRelation, DataTask,
   DomainState, FileAsset, Fulfillment, FulfillmentNode, InboundRecord, Inquiry, IntegrationRecord, Inventory,
-  Lead, LogisticsQuote, MatchResult, Notification, Opportunity, Order, Organization, PartyCompany, Product,
+  Lead, LogisticsQuote, MatchResult, Notification, Opportunity, Order, Organization, PartyCompany, PlatformProject, Product,
   ProductAsset, ProductAttribute, ProductVersion, ProjectMembership, ProviderRelation, Quotation, QuotationVersion, QuotationFeedback,
   RectificationTask, Report, ReviewRecord, RiskEvent, RiskItem, Role, RuleConfiguration, SceneRun, ServiceRequest,
   SKU, SupplierRelation, Task, TouchTask, User, VersionRecord, FollowUp, ComplianceMaterial,
@@ -15,7 +15,9 @@ export const organizations: Organization[] = [
   { ...scope('org-platform', 'org-platform', 'platform'), projectId: 'platform', name: '跨境场景平台', kind: 'platform', status: '启用' },
   { ...scope('org-enterprise-wenzhou', 'org-enterprise-wenzhou'), name: '温州智造企业', kind: 'enterprise', status: '启用' },
   { ...scope('org-enterprise-nanjing', 'org-enterprise-nanjing', 'project-nanjing'), name: '南京出海企业', kind: 'enterprise', status: '启用' },
+  { ...scope('org-enterprise-ningbo', 'org-enterprise-ningbo'), name: '宁波家居企业', kind: 'enterprise', status: '待审核' },
   { ...scope('org-service-provider', 'org-service-provider'), name: '远航合规服务商', kind: 'provider', status: '启用' },
+  { ...scope('org-provider-logistics', 'org-provider-logistics'), name: '通达国际物流', kind: 'provider', status: '启用' },
 ];
 
 export const roles: Role[] = (['enterprise_owner', 'product_operator', 'sales_operator', 'compliance_operator', 'fulfillment_operator', 'service_provider', 'platform_operator'] as const).map((code) => ({ ...scope(`role-${code}`, code === 'platform_operator' ? 'org-platform' : code === 'service_provider' ? 'org-service-provider' : 'org-enterprise-wenzhou'), name: code, code, status: '启用' }));
@@ -30,21 +32,27 @@ export const projectMemberships: ProjectMembership[] = [
   { ...scope('membership-product'), userId: 'user-product-operator', roleId: 'role-product_operator', status: '启用' },
   { ...scope('membership-provider', 'org-service-provider'), userId: 'user-provider', roleId: 'role-service_provider', status: '启用' },
   { ...scope('membership-platform-wenzhou', 'org-platform', 'project-wenzhou'), userId: 'user-platform-operator', roleId: 'role-platform_operator', status: '启用' },
+  { ...scope('membership-platform-nanjing', 'org-platform', 'project-nanjing'), userId: 'user-platform-operator', roleId: 'role-platform_operator', status: '启用' },
 ];
 
 const partyCompanies: PartyCompany[] = [
   { ...scope('party-enterprise'), name: '温州智造企业', kind: 'enterprise', status: '有效' },
+  { ...scope('party-enterprise-ningbo', 'org-enterprise-ningbo'), name: '宁波家居企业', kind: 'enterprise', status: '草稿' },
   { ...scope('party-buyer'), name: 'Global Warehouse Buyer', kind: 'customer', status: '有效' },
   { ...scope('party-supplier'), name: '华东钢材供应商', kind: 'supplier', status: '有效' },
   { ...scope('party-provider', 'org-service-provider'), name: '远航合规服务商', kind: 'provider', status: '有效' },
+  { ...scope('party-provider-logistics', 'org-provider-logistics'), name: '通达国际物流', kind: 'provider', status: '有效' },
 ];
 const contacts: Contact[] = [{ ...scope('contact-buyer'), partyCompanyId: 'party-buyer', name: 'Mia Carter', email: 'mia@example.com', status: '有效' }];
 const relation = (id: string, target: string) => ({ ...scope(id), sourceCompanyId: 'party-enterprise', targetCompanyId: target, status: '有效' as const });
 const customerRelations: CustomerRelation[] = [relation('customer-relation-demo', 'party-buyer') as CustomerRelation];
 const supplierRelations: SupplierRelation[] = [relation('supplier-relation-demo', 'party-supplier') as SupplierRelation];
-const providerRelations: ProviderRelation[] = [relation('provider-relation-demo', 'party-provider') as ProviderRelation];
+const providerRelations: ProviderRelation[] = [relation('provider-relation-demo', 'party-provider') as ProviderRelation, relation('provider-relation-logistics', 'party-provider-logistics') as ProviderRelation];
 
-const products: Product[] = [{ ...scope('product-demo'), name: '仓储货架', description: 'Steel storage rack', ownerId: 'user-product-operator', status: '草稿', currentVersion: 1 }];
+const products: Product[] = [
+  { ...scope('product-demo'), name: '仓储货架', description: 'Steel storage rack', ownerId: 'user-product-operator', status: '草稿', currentVersion: 1 },
+  { ...scope('product-ningbo', 'org-enterprise-ningbo'), name: '藤编收纳篮', description: 'Rattan storage basket', ownerId: 'user-product-operator', status: '可经营', currentVersion: 1 },
+];
 const skus: SKU[] = [{ ...scope('sku-demo'), productId: 'product-demo', code: 'RACK-001', status: '草稿' }];
 const productAttributes: ProductAttribute[] = [{ ...scope('attribute-demo'), productId: 'product-demo', name: '材质', value: '钢', status: '草稿' }];
 const files: FileAsset[] = [{ ...scope('file-product-image'), name: 'rack-demo.jpg', status: '可用' }, { ...scope('file-compliance'), name: 'certificate.pdf', status: '已上传' }];
@@ -58,10 +66,18 @@ const touchTasks: TouchTask[] = [{ ...scope('touch-demo'), leadId: 'lead-demo', 
 const followUps: FollowUp[] = [{ ...scope('follow-up-demo'), leadId: 'lead-demo', ownerId: 'user-product-operator', status: '待跟进' }];
 const opportunities: Opportunity[] = [];
 
-const inquiries: Inquiry[] = [{ ...scope('inquiry-demo'), customerId: 'party-buyer', summary: 'Need warehouse racks for 3 sites', status: '已确认' }];
+const inquiries: Inquiry[] = [
+  { ...scope('inquiry-demo'), customerId: 'party-buyer', summary: 'Need warehouse racks for 3 sites', status: '已确认' },
+  { ...scope('inquiry-logistics', 'org-enterprise-ningbo'), customerId: 'party-enterprise-ningbo', summary: '宁波家居整柜海运至洛杉矶', status: '处理中' },
+  { ...scope('inquiry-compliance', 'org-enterprise-ningbo'), customerId: 'party-enterprise-ningbo', summary: '藤编收纳篮境外合规评估', status: '处理中' },
+];
 const matchResults: MatchResult[] = [{ ...scope('match-demo'), inquiryId: 'inquiry-demo', selectedObjectId: 'product-demo', status: '待选择' }];
-const serviceRequests: ServiceRequest[] = [{ ...scope('service-request-demo'), inquiryId: 'inquiry-demo', status: '待选择' }];
-const logisticsQuotes: LogisticsQuote[] = [{ ...scope('logistics-quote-demo'), inquiryId: 'inquiry-demo', amount: 1200, status: '待选择' }];
+const serviceRequests: ServiceRequest[] = [
+  { ...scope('service-request-demo'), inquiryId: 'inquiry-demo', status: '待选择' },
+  { ...scope('service-request-logistics', 'org-enterprise-ningbo'), inquiryId: 'inquiry-logistics', status: '匹配中' },
+  { ...scope('service-request-compliance', 'org-enterprise-ningbo'), inquiryId: 'inquiry-compliance', status: '待选择' },
+];
+const logisticsQuotes: LogisticsQuote[] = [{ ...scope('logistics-quote-demo'), inquiryId: 'inquiry-demo', amount: 1200, status: '待选择' }, { ...scope('logistics-quote-ningbo', 'org-enterprise-ningbo'), inquiryId: 'inquiry-logistics', amount: 8600, status: '处理中' }];
 const quotations: Quotation[] = [{ ...scope('quotation-demo'), inquiryId: 'inquiry-demo', currentVersion: 1, amount: 12000, combination: ['海运', '基础保险'], status: '已发送' }];
 const quotationVersions: QuotationVersion[] = [{ ...scope('quotation-version-1'), quotationId: 'quotation-demo', version: 1, amount: 12000, combination: ['海运', '基础保险'], status: '已生效' }];
 const quotationFeedbacks: QuotationFeedback[] = [];
@@ -72,7 +88,7 @@ const rectificationTasks: RectificationTask[] = [{ ...scope('rectification-demo'
 const complianceMaterials: ComplianceMaterial[] = [{ ...scope('material-demo'), caseId: 'case-demo', fileAssetId: 'file-compliance', status: '已提交' }];
 const reviewRecords: ReviewRecord[] = [{ ...scope('review-demo'), caseId: 'case-demo', reviewerId: 'user-enterprise-owner', status: '待复核' }];
 
-const orders: Order[] = [{ ...scope('order-demo'), customerId: 'party-buyer', status: '执行中' }];
+const orders: Order[] = [{ ...scope('order-demo'), customerId: 'party-buyer', status: '执行中' }, { ...scope('order-ningbo', 'org-enterprise-ningbo'), customerId: 'party-enterprise-ningbo', status: '已确认' }];
 const fulfillments: Fulfillment[] = [{ ...scope('fulfillment-demo'), orderId: 'order-demo', status: '处理中' }];
 const fulfillmentNodes: FulfillmentNode[] = [{ ...scope('fulfillment-node-demo'), fulfillmentId: 'fulfillment-demo', name: '备货', status: '处理中' }];
 const riskEvents: RiskEvent[] = [];
@@ -105,11 +121,17 @@ const dataTasks: DataTask[] = empty();
 const ruleConfigurations: RuleConfiguration[] = [{ ...scope('rule-config-demo'), name: '境外商品合规规则', version: '2026.08', status: '已生效' }];
 const integrations: IntegrationRecord[] = empty();
 
+const allDomains = ['市场判断与选品', '商品建档与内容经营', '营销内容与社媒经营', '获客与客户经营', '询价与报价', '服务与物流', '订单与供应链', '库存与入库', '经营分析与报告', '合规处理'];
+const platformProjects: PlatformProject[] = [
+  { ...scope('project-wenzhou', 'org-platform', 'project-wenzhou'), name: '温州外贸综合服务项目', region: '温州', modes: ['1039', '9710'], enabledDomains: allDomains, status: '启用' },
+  { ...scope('project-nanjing', 'org-platform', 'project-nanjing'), name: '南京合规出海项目', region: '南京', modes: ['9810', '9710'], enabledDomains: ['合规处理', '服务与物流', '经营分析与报告'], status: '启用' },
+];
+
 export const demoState: DomainState = {
   organizations, users, roles, projectMemberships, partyCompanies, contacts, customerRelations, supplierRelations, providerRelations,
   products, skus, productAttributes, productAssets, productVersions, channelListings, leads, customerProfiles, touchTasks, followUps, opportunities,
   inquiries, matchResults, serviceRequests, logisticsQuotes, quotations, quotationVersions, quotationFeedbacks, complianceCases, risks, rectificationTasks, complianceMaterials,
-  reviewRecords, orders, fulfillments, fulfillmentNodes, riskEvents, inventories, inboundRecords, reports, dataTasks, ruleConfigurations, sceneRuns,
+  reviewRecords, orders, fulfillments, fulfillmentNodes, riskEvents, inventories, inboundRecords, reports, dataTasks, ruleConfigurations, platformProjects, sceneRuns,
   candidates, tasks, notifications, files, versionRecords, auditLogs, integrations,
 };
 

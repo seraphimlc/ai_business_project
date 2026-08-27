@@ -31,6 +31,15 @@ npm run lint
 - `/architecture/product`：产品架构图
 - `/architecture/system`：系统架构图
 - `/architecture/objects`：五条主线与业务对象关系图
+- `/admin`：平台运营工作台（企业入驻审核、服务商管理、项目场景配置、服务需求池、运营数据与风险）
+- `/admin/enterprises`：企业管理
+- `/admin/enterprises/org-enterprise-ningbo`：企业详情（含待审核入驻演示）
+- `/admin/providers`：服务商管理
+- `/admin/projects`：项目场景配置（9810 / 9710 / 1039 模式承载）
+- `/admin/services`：服务需求池（受理与分配服务商）
+- `/admin/data`：运营数据与风险概览
+
+左侧「当前工作区」可在企业工作区与平台运营工作区之间切换。
 
 ## Demo 角色
 

@@ -2,7 +2,7 @@ export type ID = string;
 export type ISODate = string;
 
 export const CANONICAL_STATUSES = {
-  Organization: ['启用', '停用'] as const,
+  Organization: ['待审核', '启用', '停用'] as const,
   User: ['启用', '停用'] as const,
   Role: ['启用', '停用'] as const,
   ProjectMembership: ['启用', '停用'] as const,
@@ -113,6 +113,7 @@ export interface InboundRecord extends ScopedRecord { orderId: ID; quantity: num
 export interface Report extends ScopedRecord { title: string; status: typeof CANONICAL_STATUSES.Report[number]; }
 export interface DataTask extends ScopedRecord { name: string; status: typeof CANONICAL_STATUSES.DataTask[number]; }
 export interface RuleConfiguration extends ScopedRecord { name: string; version: string; status: typeof CANONICAL_STATUSES.RuleConfiguration[number]; }
+export interface PlatformProject extends ScopedRecord { name: string; region: string; modes: string[]; enabledDomains: string[]; status: typeof CANONICAL_STATUSES.Organization[number]; }
 export interface SceneRun extends ScopedRecord { sceneType: string; initiatedBy: ID; targetObject: { type: ObjectType; id: ID }; status: SceneRunStatus; sourceEndpoint: 'Web' | '小程序'; }
 export interface CandidateResult extends ScopedRecord { sceneRunId: ID; targetObject: { type: ObjectType; id: ID }; sourceVersion: number; candidateVersion: number; payload: Record<string, unknown>; sourcePayload?: Record<string, unknown>; fieldMapping: Record<string, string>; status: typeof CANONICAL_STATUSES.CandidateResult[number]; idempotencyKey: string; confirmedBy?: ID; confirmedAt?: ISODate; }
 export type TaskKind = 'confirmation' | 'publish' | 'follow_up' | 'risk_review' | 'rule_review' | 'exception';
@@ -120,7 +121,7 @@ export interface Task extends ScopedRecord { title: string; kind: TaskKind; obje
 export interface Notification extends ScopedRecord { recipientId: ID; title: string; status: typeof CANONICAL_STATUSES.Notification[number]; idempotencyKey: string; }
 export interface FileAsset extends ScopedRecord { name: string; status: typeof CANONICAL_STATUSES.FileAsset[number]; }
 export interface VersionRecord extends ScopedRecord { objectType: ObjectType; objectId: ID; version: number; sourceCandidateId?: ID; status: '正式' | '候选'; }
-export interface AuditLog extends ScopedRecord { actorId: ID; action: string; objectType: ObjectType | 'Task' | 'SceneRun'; objectId: ID; status: typeof CANONICAL_STATUSES.AuditLog[number]; before?: unknown; after?: unknown; idempotencyKey?: string; }
+export interface AuditLog extends ScopedRecord { actorId: ID; action: string; objectType: ObjectType | 'Task' | 'SceneRun' | 'PlatformProject'; objectId: ID; status: typeof CANONICAL_STATUSES.AuditLog[number]; before?: unknown; after?: unknown; idempotencyKey?: string; }
 export interface IntegrationRecord extends ScopedRecord { provider: string; status: typeof CANONICAL_STATUSES.IntegrationRecord[number]; idempotencyKey: string; responseSummary?: string; }
 
 export interface CatalogEntry {
@@ -157,7 +158,7 @@ export interface DomainState {
   inquiries: Inquiry[]; matchResults: MatchResult[]; serviceRequests: ServiceRequest[]; logisticsQuotes: LogisticsQuote[]; quotations: Quotation[]; quotationVersions: QuotationVersion[]; quotationFeedbacks: QuotationFeedback[];
   complianceCases: ComplianceCase[]; risks: RiskItem[]; rectificationTasks: RectificationTask[]; complianceMaterials: ComplianceMaterial[]; reviewRecords: ReviewRecord[];
   orders: Order[]; fulfillments: Fulfillment[]; fulfillmentNodes: FulfillmentNode[]; riskEvents: RiskEvent[]; inventories: Inventory[]; inboundRecords: InboundRecord[];
-  reports: Report[]; dataTasks: DataTask[]; ruleConfigurations: RuleConfiguration[];
+  reports: Report[]; dataTasks: DataTask[]; ruleConfigurations: RuleConfiguration[]; platformProjects: PlatformProject[];
   sceneRuns: SceneRun[]; candidates: CandidateResult[]; tasks: Task[]; notifications: Notification[]; files: FileAsset[]; versionRecords: VersionRecord[]; auditLogs: AuditLog[]; integrations: IntegrationRecord[];
 }
 
@@ -192,4 +193,8 @@ export type DomainAction =
   | { type: 'riskEventEvent'; actor: Actor; riskEventId: ID; event: 'start' | 'submit_review' | 'resolve' | 'accept' | 'close'; idempotencyKey?: string }
   | { type: 'inventoryEvent'; actor: Actor; inventoryId: ID; event: 'warn' | 'freeze' | 'start_count' | 'release'; idempotencyKey?: string }
   | { type: 'inboundRecordEvent'; actor: Actor; inboundRecordId: ID; event: 'start_inspection' | 'partial' | 'complete' | 'exception'; idempotencyKey?: string }
+  | { type: 'approveEnterpriseAdmission'; actor: Actor; organizationId: ID; idempotencyKey?: string }
+  | { type: 'rejectEnterpriseAdmission'; actor: Actor; organizationId: ID; reason?: string; idempotencyKey?: string }
+  | { type: 'toggleProjectDomain'; actor: Actor; projectId: ID; domain: string; idempotencyKey?: string }
+  | { type: 'assignServiceRequest'; actor: Actor; serviceRequestId: ID; providerId: ID; idempotencyKey?: string }
   | { type: 'resetDemo' };

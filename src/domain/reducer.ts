@@ -525,6 +525,39 @@ export function domainReducer(current: DomainState, action: DomainAction): Domai
     case 'riskEventEvent': return riskEventEvent(state, trusted, actor);
     case 'inventoryEvent': return inventoryEvent(state, trusted, actor);
     case 'inboundRecordEvent': return inboundRecordEvent(state, trusted, actor);
+    case 'approveEnterpriseAdmission': {
+      const org = findScoped(state.organizations, trusted.organizationId, actor);
+      if (org.status !== '待审核') fail('INVALID_TRANSITION', '只有待审核企业可以完成入驻');
+      org.status = '启用'; org.updatedAt = now;
+      const party = state.partyCompanies.find((p) => p.organizationId === org.id);
+      if (party && party.status === '草稿') { party.status = '有效'; party.updatedAt = now; }
+      appendAudit(state, actor, 'enterprise.admission-approved', 'Organization', org.id, { status: '待审核' }, { status: '启用' }, trusted.idempotencyKey, org);
+      return state;
+    }
+    case 'rejectEnterpriseAdmission': {
+      const org = findScoped(state.organizations, trusted.organizationId, actor);
+      if (org.status !== '待审核') fail('INVALID_TRANSITION', '只有待审核企业可以被驳回');
+      org.status = '停用'; org.updatedAt = now;
+      appendAudit(state, actor, 'enterprise.admission-rejected', 'Organization', org.id, { status: '待审核' }, { status: '停用', reason: trusted.reason }, trusted.idempotencyKey, org);
+      return state;
+    }
+    case 'toggleProjectDomain': {
+      const project = findScoped(state.platformProjects, trusted.projectId, actor);
+      const has = project.enabledDomains.includes(trusted.domain);
+      project.enabledDomains = has ? project.enabledDomains.filter((d) => d !== trusted.domain) : [...project.enabledDomains, trusted.domain];
+      project.updatedAt = now;
+      appendAudit(state, actor, has ? 'project.domain-disabled' : 'project.domain-enabled', 'PlatformProject', project.id, undefined, { domain: trusted.domain }, trusted.idempotencyKey, project);
+      return state;
+    }
+    case 'assignServiceRequest': {
+      const request = findScoped(state.serviceRequests, trusted.serviceRequestId, actor);
+      if (!['草稿', '待受理', '匹配中', '待选择'].includes(request.status)) fail('INVALID_TRANSITION', '当前服务需求不可分配');
+      const provider = state.organizations.find((o) => o.id === trusted.providerId && o.kind === 'provider' && o.status === '启用');
+      if (!provider) return fail('PROVIDER_NOT_FOUND', '服务商不存在或未启用');
+      request.providerId = provider.id; request.status = '已承接'; request.updatedAt = now;
+      appendAudit(state, actor, 'service-request.assigned', 'ServiceRequest', request.id, undefined, { providerId: provider.id, status: request.status }, trusted.idempotencyKey, request);
+      return state;
+    }
     default: return fail('ACTION_UNSUPPORTED', '不支持的领域动作');
   }
 }

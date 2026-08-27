@@ -10,16 +10,28 @@ import {
 describe('deterministic fixtures and catalog', () => {
   it('ships the required organizations and business objects', () => {
     expect(demoState.organizations.filter((item) => item.kind === 'platform')).toHaveLength(1);
-    expect(demoState.organizations.filter((item) => item.kind === 'enterprise')).toHaveLength(2);
-    expect(demoState.organizations.filter((item) => item.kind === 'provider')).toHaveLength(1);
-    expect(demoState.products).toHaveLength(1);
+    expect(demoState.organizations.filter((item) => item.kind === 'enterprise')).toHaveLength(3);
+    expect(demoState.organizations.filter((item) => item.kind === 'enterprise' && item.status === '待审核')).toHaveLength(1);
+    expect(demoState.organizations.filter((item) => item.kind === 'provider')).toHaveLength(2);
+    expect(demoState.products).toHaveLength(2);
     expect(demoState.productAssets.length).toBeGreaterThan(0);
     expect(demoState.leads).toHaveLength(1);
     expect(demoState.complianceCases).toHaveLength(1);
-    expect(demoState.inquiries).toHaveLength(1);
+    expect(demoState.inquiries).toHaveLength(3);
+    expect(demoState.serviceRequests).toHaveLength(3);
     expect(demoState.quotations).toHaveLength(1);
-    expect(demoState.orders).toHaveLength(1);
+    expect(demoState.orders).toHaveLength(2);
     expect(demoState.tasks.length).toBeGreaterThan(0);
+  });
+
+  it('ships platform projects covering 9810/9710/1039 modes and domain configuration', () => {
+    expect(demoState.platformProjects).toHaveLength(2);
+    const wenzhou = demoState.platformProjects.find((item) => item.id === 'project-wenzhou');
+    const nanjing = demoState.platformProjects.find((item) => item.id === 'project-nanjing');
+    expect(wenzhou?.modes).toEqual(expect.arrayContaining(['1039', '9710']));
+    expect(nanjing?.modes).toEqual(expect.arrayContaining(['9810', '9710']));
+    expect(wenzhou?.enabledDomains.length).toBeGreaterThan(3);
+    expect(nanjing?.enabledDomains).toEqual(expect.arrayContaining(['合规处理', '服务与物流', '经营分析与报告']));
   });
 
   it('contains exactly 42 Wenzhou and 12 Nanjing source entries', () => {
