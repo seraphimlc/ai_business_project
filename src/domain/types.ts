@@ -129,7 +129,7 @@ export interface VersionRecord extends ScopedRecord { objectType: ObjectType; ob
 export interface AuditLog extends ScopedRecord { actorId: ID; action: string; objectType: ObjectType | 'Task' | 'SceneRun' | 'PlatformProject'; objectId: ID; status: typeof CANONICAL_STATUSES.AuditLog[number]; before?: unknown; after?: unknown; idempotencyKey?: string; }
 export interface IntegrationRecord extends ScopedRecord { provider: string; status: typeof CANONICAL_STATUSES.IntegrationRecord[number]; idempotencyKey: string; responseSummary?: string; }
 export type MarketplacePlatform = '亚马逊' | 'TikTok' | '独立站';
-export interface PlatformListing extends ScopedRecord { productId: ID; platform: MarketplacePlatform; title: string; keywords: string[]; price: number; status: typeof CANONICAL_STATUSES.PlatformListing[number]; }
+export interface PlatformListing extends ScopedRecord { productId: ID; platform: MarketplacePlatform; title: string; keywords: string[]; price: number; description?: string; status: typeof CANONICAL_STATUSES.PlatformListing[number]; }
 export interface ProductCandidate extends ScopedRecord { name: string; category: string; opportunityScore: number; trend: string; reason: string; status: typeof CANONICAL_STATUSES.ProductCandidate[number]; }
 export interface SourceOffer extends ScopedRecord { productName: string; supplier: string; price: number; moq: number; rating: number; status: typeof CANONICAL_STATUSES.SourceOffer[number]; }
 export interface ProductCert extends ScopedRecord { productId: ID; certType: string; status: typeof CANONICAL_STATUSES.ProductCert[number]; expireAt: ISODate; }
@@ -178,6 +178,7 @@ export type DomainAction =
   | { type: 'updateProductDraft'; actor: Actor; productId: ID; fields: Partial<Pick<Product, 'name' | 'description' | 'price' | 'unit' | 'category'>>; idempotencyKey: string }
   | { type: 'uploadProductAsset'; actor: Actor; productId: ID; assetId: ID; fileId: ID; name: string; kind: 'image' | 'video' | 'document'; idempotencyKey: string }
   | { type: 'publishProduct'; actor: Actor; productId: ID; channel?: string; idempotencyKey: string }
+  | { type: 'saveListingContent'; actor: Actor; productId: ID; platform: MarketplacePlatform; title: string; keywords: string[]; description?: string; idempotencyKey: string }
   | { type: 'processProductContent'; actor: Actor; productId: ID; sceneRunId: ID; candidateId: ID; payload: Record<string, unknown>; sourceVersion: number; idempotencyKey: string }
   | { type: 'startScene'; actor: Actor; sceneRunId: ID; sceneType: string; targetObject: { type: ObjectType; id: ID }; sourceEndpoint?: 'Web' | '小程序' }
   | { type: 'processingComplete'; actor: Actor; sceneRunId: ID; candidateId: ID; payload: Record<string, unknown>; sourceVersion: number; idempotencyKey: string }

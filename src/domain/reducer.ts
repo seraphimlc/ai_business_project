@@ -549,6 +549,21 @@ export function domainReducer(current: DomainState, action: DomainAction): Domai
       appendAudit(state, actor, 'product.published', 'ChannelListing', existing?.id ?? `listing-${product.id}-${channel}`, { status: product.status }, { channel, published: true }, trusted.idempotencyKey, product);
       return state;
     }
+    case 'saveListingContent': {
+      assertCanOperate(actor);
+      if (hasAudit(state, trusted.idempotencyKey)) return state;
+      const product = findScoped(state.products, trusted.productId, actor);
+      if (!trusted.title.trim() || trusted.keywords.length === 0) fail('LISTING_CONTENT_INVALID', 'Listing 标题与关键词不能为空');
+      const existing = state.platformListings.find((item) => item.productId === product.id && item.platform === trusted.platform);
+      if (existing) {
+        existing.title = trusted.title.trim(); existing.keywords = [...trusted.keywords]; existing.description = trusted.description ?? existing.description; existing.updatedAt = now;
+        appendAudit(state, actor, 'listing.content-saved', 'PlatformListing', existing.id, undefined, { platform: existing.platform, title: existing.title }, trusted.idempotencyKey, product);
+      } else {
+        state.platformListings.push({ id: `listing-${product.id}-${trusted.platform}`, organizationId: product.organizationId, projectId: product.projectId, createdAt: now, updatedAt: now, productId: product.id, platform: trusted.platform, title: trusted.title.trim(), keywords: [...trusted.keywords], description: trusted.description, price: 0, status: '草稿' });
+        appendAudit(state, actor, 'listing.content-saved', 'PlatformListing', `listing-${product.id}-${trusted.platform}`, undefined, { platform: trusted.platform, title: trusted.title }, trusted.idempotencyKey, product);
+      }
+      return state;
+    }
     case 'processProductContent': {
       assertCanOperate(actor);
       const product = findScoped(state.products, trusted.productId, actor);

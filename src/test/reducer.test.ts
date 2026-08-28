@@ -386,6 +386,17 @@ describe('authoritative local reducer', () => {
     expect(accepted.notifications.some((item) => item.recipientId === 'user-enterprise-owner' && item.title.includes('已接受'))).toBe(true);
   });
 
+  it('saves AI-generated listing content back to the platform listing', () => {
+    const owner = { userId: 'user-enterprise-owner', organizationId: 'org-enterprise-wenzhou', projectIds: ['project-wenzhou'], role: 'enterprise_owner' as const };
+    const saved = apply({ type: 'saveListingContent', actor: owner, productId: 'product-rack-pro', platform: '亚马逊', title: 'Heavy Duty Pallet Rack - Updated', keywords: ['storage rack', 'warehouse'], description: 'New AI copy', idempotencyKey: 'save-listing-1' });
+    expect(saved.platformListings.find((item) => item.productId === 'product-rack-pro' && item.platform === '亚马逊')?.title).toBe('Heavy Duty Pallet Rack - Updated');
+    expect(saved.auditLogs.some((item) => item.action === 'listing.content-saved')).toBe(true);
+    const created = apply({ type: 'saveListingContent', actor: owner, productId: 'product-lamp-led', platform: 'TikTok', title: 'LED 感应壁灯 新标题', keywords: ['led', '壁灯'], idempotencyKey: 'save-listing-2' }, saved);
+    expect(created.platformListings.some((item) => item.productId === 'product-lamp-led' && item.platform === 'TikTok' && item.status === '草稿')).toBe(true);
+    const twice = apply({ type: 'saveListingContent', actor: owner, productId: 'product-rack-pro', platform: '亚马逊', title: 'Duplicate', keywords: ['x'], idempotencyKey: 'save-listing-1' }, saved);
+    expect(twice.platformListings.filter((item) => item.productId === 'product-rack-pro' && item.platform === '亚马逊' && item.title === 'Heavy Duty Pallet Rack - Updated')).toHaveLength(1);
+  });
+
   it('denies customer feedback on quotations from other customers', () => {
     const customer: Actor = { userId: 'user-buyer', organizationId: 'org-enterprise-wenzhou', projectIds: ['project-wenzhou'], role: 'customer' };
     const otherQuotation = { ...demoState.quotations[0], id: 'quotation-other', inquiryId: 'inquiry-logistics', status: '已发送' as const };

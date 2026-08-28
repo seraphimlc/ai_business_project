@@ -133,7 +133,8 @@ export function CaptureFlow({ navigate }: H5PageProps) {
             </div>
             <div className="h5-section" style={{ marginTop: '0.9rem' }}>
               <button className="h5-btn ghost block" onClick={() => navigate('/lkb')}>✨ 去 AI 商品内容工作台生成真实效果</button>
-              <p className="h5-footnote">极创工作台支持服装套图、图片编辑、质量提升、视频创作等，生成后可回到这里继续发布。</p>
+              <button className="h5-btn ghost block" style={{ marginTop: '0.5rem' }} onClick={() => fileInput.current?.click()}>📥 从相册导入 AI 生成图</button>
+              <p className="h5-footnote">在极创生成商品图 / 场景图 / 视频后保存到相册，再点「从相册导入」即可作为效果图继续发布。</p>
             </div>
           </>
         )}

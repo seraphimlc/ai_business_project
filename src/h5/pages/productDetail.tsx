@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useDomainStore } from '../../domain/store';
-import { H5Header, StatusBadge, categoryEmoji, useToast } from '../components';
+import { H5Header, H5Section, StatusBadge, categoryEmoji, useToast } from '../components';
 import { useH5 } from '../context';
 import type { H5PageProps } from '../H5App';
 import type { DomainAction } from '../../domain/types';
@@ -14,6 +14,7 @@ export function ProductDetail({ id, navigate }: H5PageProps & { id: string }) {
   const [editPrice, setEditPrice] = useState('');
   const [editUnit, setEditUnit] = useState('');
   const [activeAsset, setActiveAsset] = useState(0);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const product = state.products.find((item) => item.id === id);
   if (!product || product.ownerId !== actor.userId) {
@@ -49,6 +50,16 @@ export function ProductDetail({ id, navigate }: H5PageProps & { id: string }) {
   };
 
   const currentAsset = assets[Math.min(activeAsset, Math.max(assets.length - 1, 0))];
+
+  const importAsset = (files: FileList | null) => {
+    const accepted = Array.from(files ?? []).filter((file) => file.type.startsWith('image/'));
+    accepted.forEach((file, index) => {
+      const token = `${Date.now().toString(36)}-${index}`;
+      dispatch({ type: 'uploadProductAsset', actor, productId: product.id, assetId: `asset-h5-${token}`, fileId: `file-h5-${token}`, name: file.name, kind: 'image', idempotencyKey: `h5-asset-${token}` } satisfies DomainAction);
+    });
+    if (accepted.length) toast.show(`已导入 ${accepted.length} 张图片到商品素材`);
+    if (fileInput.current) fileInput.current.value = '';
+  };
 
   return (
     <>
@@ -94,6 +105,18 @@ export function ProductDetail({ id, navigate }: H5PageProps & { id: string }) {
             </div>
           </div>
         </div>
+
+        <H5Section title="商品素材" note={`${assets.length} 张 · AI 生成图可导入`}>
+          <div className="h5-card">
+            <div className="h5-upload" style={{ marginBottom: '0.7rem' }}>
+              {assets.map((asset) => <div key={asset.id} className="h5-upload-tile" style={{ border: 'none', padding: 0 }}><span style={{ fontSize: '1.6rem' }}>🖼️</span></div>)}
+              <button type="button" className="h5-upload-tile" onClick={() => fileInput.current?.click()}><i>＋</i><span>导入图片</span></button>
+              <input ref={fileInput} type="file" accept="image/*" multiple capture="environment" style={{ display: 'none' }} onChange={(event) => importAsset(event.target.files)} />
+            </div>
+            <button className="h5-btn ghost block" onClick={() => navigate('/lkb')}>✨ 去 AI 工作台生成商品图 / 视频</button>
+            <p className="h5-footnote">在 AI 工作台生成后保存图片到手机相册，再回到这里点「导入图片」即可写回商品素材。</p>
+          </div>
+        </H5Section>
 
         {openRisk && (
           <div className="h5-section">
